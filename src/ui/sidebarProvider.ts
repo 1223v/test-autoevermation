@@ -832,6 +832,59 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <span id="connectionText">Not connected</span>
     </div>
 
+    <!-- Server Settings -->
+    <div class="section">
+        <div class="section-title">Server Settings</div>
+
+        <div class="input-group">
+            <label for="apiUrl">API Server URL</label>
+            <input type="text" id="apiUrl" placeholder="http://localhost:8000/api/v1">
+        </div>
+
+        <div class="input-group">
+            <label for="apiKey">API Key</label>
+            <input type="password" id="apiKey" placeholder="Enter your API key">
+        </div>
+
+        <button class="btn btn-primary" id="btnSave">
+            Save Settings
+        </button>
+
+        <button class="btn btn-secondary" id="btnTestConnection">
+            <span id="testConnectionText">Test Connection</span>
+            <span class="spinner hidden" id="testConnectionSpinner"></span>
+        </button>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- Generation Options -->
+    <div class="section">
+        <div class="section-title">Generation Options</div>
+
+        <div class="input-group">
+            <label for="testFramework">Test Framework</label>
+            <select id="testFramework">
+                <option value="junit5">JUnit 5</option>
+                <option value="junit4">JUnit 4</option>
+            </select>
+        </div>
+
+        <div class="input-group">
+            <label for="mockingFramework">Mocking Framework</label>
+            <select id="mockingFramework">
+                <option value="mockito">Mockito</option>
+                <option value="easymock">EasyMock</option>
+            </select>
+        </div>
+
+        <button class="btn btn-secondary" id="btnOpenSettings">
+            Open Full Settings
+        </button>
+    </div>
+
+    <div class="divider"></div>
+
     <!-- File Selection -->
     <div class="section">
         <div class="section-title">Select Java File</div>
@@ -918,59 +971,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <div id="testResultArea" class="hidden">
             <div class="test-result" id="testResult"></div>
         </div>
-    </div>
-
-    <div class="divider"></div>
-
-    <!-- Server Settings -->
-    <div class="section">
-        <div class="section-title">Server Settings</div>
-
-        <div class="input-group">
-            <label for="apiUrl">API Server URL</label>
-            <input type="text" id="apiUrl" placeholder="http://localhost:8000/api/v1">
-        </div>
-
-        <div class="input-group">
-            <label for="apiKey">API Key</label>
-            <input type="password" id="apiKey" placeholder="Enter your API key">
-        </div>
-
-        <button class="btn btn-primary" id="btnSave">
-            Save Settings
-        </button>
-
-        <button class="btn btn-secondary" id="btnTestConnection">
-            <span id="testConnectionText">Test Connection</span>
-            <span class="spinner hidden" id="testConnectionSpinner"></span>
-        </button>
-    </div>
-
-    <div class="divider"></div>
-
-    <!-- Generation Options -->
-    <div class="section">
-        <div class="section-title">Generation Options</div>
-
-        <div class="input-group">
-            <label for="testFramework">Test Framework</label>
-            <select id="testFramework">
-                <option value="junit5">JUnit 5</option>
-                <option value="junit4">JUnit 4</option>
-            </select>
-        </div>
-
-        <div class="input-group">
-            <label for="mockingFramework">Mocking Framework</label>
-            <select id="mockingFramework">
-                <option value="mockito">Mockito</option>
-                <option value="easymock">EasyMock</option>
-            </select>
-        </div>
-
-        <button class="btn btn-secondary" id="btnOpenSettings">
-            Open Full Settings
-        </button>
     </div>
 
     <!-- Message Area -->

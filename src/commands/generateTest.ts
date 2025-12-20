@@ -6,6 +6,7 @@ import { StatusBarManager } from '../ui/statusBar';
 import { SettingsManager } from '../config/settings';
 import { SourceFile, GenerateTestRequest } from '../api/types';
 import { getUserFriendlyErrorMessage } from '../api/errors';
+import { mergeTestMethods, mergeImports, extractTestMethods } from '../services/javaParser';
 
 /**
  * Creates the generate test command
@@ -136,28 +137,58 @@ export function createGenerateTestCommand(
                         );
 
                         // Check if file exists and ask for confirmation
+                        let finalContent = response.testFile.content;
+
                         if (await fileManager.fileExists(testPath)) {
-                            const overwrite = await vscode.window.showWarningMessage(
-                                `Test file already exists: ${response.testFile.fileName}`,
+                            const existingContent = await fileManager.readFile(testPath);
+                            const existingTestMethods = extractTestMethods(existingContent);
+                            const newTestMethods = extractTestMethods(response.testFile.content);
+
+                            // Check if there are overlapping test methods
+                            const overlapping = newTestMethods.filter(m => existingTestMethods.includes(m));
+                            const newMethods = newTestMethods.filter(m => !existingTestMethods.includes(m));
+
+                            let dialogMessage = `Test file already exists: ${response.testFile.fileName}`;
+                            if (newMethods.length > 0) {
+                                dialogMessage += `\n\nNew test methods: ${newMethods.length}`;
+                            }
+                            if (overlapping.length > 0) {
+                                dialogMessage += `\nOverlapping methods: ${overlapping.length}`;
+                            }
+
+                            const action = await vscode.window.showWarningMessage(
+                                dialogMessage,
+                                { modal: true },
+                                'Merge (Add New)',
                                 'Overwrite',
                                 'Create Backup',
                                 'Cancel'
                             );
 
-                            if (overwrite === 'Cancel' || !overwrite) {
+                            if (action === 'Cancel' || !action) {
                                 statusBar.setReady();
                                 return;
                             }
 
-                            if (overwrite === 'Create Backup') {
+                            if (action === 'Create Backup') {
                                 await fileManager.createBackup(testPath);
+                            } else if (action === 'Merge (Add New)') {
+                                // Merge imports first
+                                let mergedContent = mergeImports(existingContent, response.testFile.content);
+                                // Then merge test methods
+                                mergedContent = mergeTestMethods(mergedContent, response.testFile.content);
+                                finalContent = mergedContent;
+
+                                vscode.window.showInformationMessage(
+                                    `Merged ${newMethods.length} new test methods into existing file`
+                                );
                             }
                         }
 
                         // Save test file
                         const saveResult = await fileManager.saveTestFile(
                             testPath,
-                            response.testFile.content
+                            finalContent
                         );
 
                         if (!saveResult.success) {

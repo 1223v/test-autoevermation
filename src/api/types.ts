@@ -36,6 +36,7 @@ export interface GenerateTestRequest {
     dependencies?: SourceFile[];
     options: GenerationOptions;
     scenarios?: string;
+    selectedMethods?: string[];
 }
 
 /**
@@ -128,6 +129,7 @@ export interface AnalyzeRequest {
 export interface GenerateScenariosRequest {
     sourceFile: SourceFile;
     options: GenerationOptions;
+    selectedMethods?: string[];
 }
 
 /**

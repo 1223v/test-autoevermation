@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ApiClient } from '../api/client';
 import { SettingsManager } from '../config/settings';
 import { getUserFriendlyErrorMessage } from '../api/errors';
+import { extractMethods } from '../services/javaParser';
 
 /**
  * Provides the sidebar webview panel
@@ -72,10 +73,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     await this._runAllTests();
                     break;
                 case 'generateScenarios':
-                    await this._generateScenarios(message.filePath);
+                    await this._generateScenarios(message.filePath, message.selectedMethods);
                     break;
                 case 'useCurrentFile':
                     await this._useCurrentFile();
+                    break;
+                case 'extractMethods':
+                    await this._extractMethods(message.filePath);
                     break;
             }
         });
@@ -230,7 +234,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _generateScenarios(filePath: string): Promise<void> {
+    private async _extractMethods(filePath: string): Promise<void> {
+        try {
+            const uri = vscode.Uri.file(filePath);
+            const contentBuffer = await vscode.workspace.fs.readFile(uri);
+            const content = new TextDecoder().decode(contentBuffer);
+
+            const methods = extractMethods(content);
+
+            this._view?.webview.postMessage({
+                command: 'methodsLoaded',
+                methods: methods
+            });
+        } catch (error) {
+            this._view?.webview.postMessage({
+                command: 'methodsLoaded',
+                methods: []
+            });
+            vscode.window.showErrorMessage('Failed to extract methods from file');
+        }
+    }
+
+    private async _generateScenarios(filePath: string, selectedMethods?: string[]): Promise<void> {
         if (!filePath) {
             this._view?.webview.postMessage({
                 command: 'scenarioError',
@@ -263,7 +288,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     mockingFramework: this._settings.getMockingFramework(),
                     coverageTarget: this._settings.getCoverageTarget(),
                     includeEdgeCases: this._settings.getIncludeEdgeCases()
-                }
+                },
+                selectedMethods: selectedMethods
             });
 
             this._view?.webview.postMessage({
@@ -823,6 +849,64 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             gap: 8px;
             margin-bottom: 12px;
         }
+        .method-selection-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .method-selection-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .link-btn {
+            color: var(--vscode-textLink-foreground);
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .link-btn:hover {
+            text-decoration: underline;
+        }
+        .method-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 12px;
+            background-color: var(--vscode-input-background);
+        }
+        .method-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 12px;
+        }
+        .method-item input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+        }
+        .method-item label {
+            cursor: pointer;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        .method-item:hover {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+        .method-loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+        }
+        .method-count {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
@@ -909,6 +993,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <div class="selected-file-path" id="selectedFilePath"></div>
             </div>
             <button class="selected-file-remove" id="btnRemoveFile" title="Remove">&#10005;</button>
+        </div>
+
+        <!-- Method Selection (shown after file is selected) -->
+        <div id="methodSelectionSection" class="hidden">
+            <div class="method-selection-header">
+                <span class="section-title">Select Methods</span>
+                <div class="method-selection-actions">
+                    <span class="link-btn" id="btnSelectAll">All</span>
+                    <span class="link-btn" id="btnDeselectAll">None</span>
+                </div>
+            </div>
+            <div class="method-list" id="methodList">
+                <div class="method-loading">
+                    <span class="spinner"></span> Loading methods...
+                </div>
+            </div>
         </div>
 
         <!-- Step 1: Generate Scenarios -->
@@ -1011,6 +1111,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const btnRegenerateScenarios = document.getElementById('btnRegenerateScenarios');
         const btnGenerateSelected = document.getElementById('btnGenerateSelected');
 
+        // Method selection elements
+        const methodSelectionSection = document.getElementById('methodSelectionSection');
+        const methodList = document.getElementById('methodList');
+        const btnSelectAll = document.getElementById('btnSelectAll');
+        const btnDeselectAll = document.getElementById('btnDeselectAll');
+
         // Test execution elements
         const testClassNameInput = document.getElementById('testClassName');
         const btnRunTest = document.getElementById('btnRunTest');
@@ -1025,6 +1131,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         let currentTestClassName = null;
         let scenariosApproved = false;
         let currentScenarios = '';
+        let availableMethods = [];
+        let selectedMethods = [];
 
         // Request initial settings
         vscode.postMessage({ command: 'getSettings' });
@@ -1060,19 +1168,79 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             currentFilePath = null;
             currentScenarios = '';
             scenariosApproved = false;
+            availableMethods = [];
+            selectedMethods = [];
             selectedFile.classList.add('hidden');
             fileSelectionOptions.classList.remove('hidden');
+            methodSelectionSection.classList.add('hidden');
             scenarioSection.classList.add('hidden');
             btnGenerateScenarios.disabled = true;
             btnGenerateSelected.disabled = true;
         });
 
+        // Method selection helpers
+        function renderMethods(methods) {
+            if (methods.length === 0) {
+                methodList.innerHTML = '<div class="method-loading">No methods found</div>';
+                return;
+            }
+
+            methodList.innerHTML = methods.map((method, index) =>
+                '<div class="method-item">' +
+                '<input type="checkbox" id="method_' + index + '" checked>' +
+                '<label for="method_' + index + '">' + method.name + '()</label>' +
+                '</div>'
+            ).join('');
+
+            // Add change listeners
+            methods.forEach((method, index) => {
+                const checkbox = document.getElementById('method_' + index);
+                checkbox.addEventListener('change', () => {
+                    updateSelectedMethods();
+                });
+            });
+
+            updateSelectedMethods();
+        }
+
+        function updateSelectedMethods() {
+            selectedMethods = [];
+            availableMethods.forEach((method, index) => {
+                const checkbox = document.getElementById('method_' + index);
+                if (checkbox && checkbox.checked) {
+                    selectedMethods.push(method.name);
+                }
+            });
+
+            // Enable/disable generate scenarios based on selection
+            btnGenerateScenarios.disabled = selectedMethods.length === 0;
+        }
+
+        // Select all methods
+        btnSelectAll.addEventListener('click', () => {
+            availableMethods.forEach((_, index) => {
+                const checkbox = document.getElementById('method_' + index);
+                if (checkbox) checkbox.checked = true;
+            });
+            updateSelectedMethods();
+        });
+
+        // Deselect all methods
+        btnDeselectAll.addEventListener('click', () => {
+            availableMethods.forEach((_, index) => {
+                const checkbox = document.getElementById('method_' + index);
+                if (checkbox) checkbox.checked = false;
+            });
+            updateSelectedMethods();
+        });
+
         // Generate scenarios for selected file
         btnGenerateScenarios.addEventListener('click', () => {
-            if (currentFilePath) {
+            if (currentFilePath && selectedMethods.length > 0) {
                 vscode.postMessage({
                     command: 'generateScenarios',
-                    filePath: currentFilePath
+                    filePath: currentFilePath,
+                    selectedMethods: selectedMethods
                 });
             }
         });
@@ -1205,9 +1373,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     fileSelectionOptions.classList.add('hidden');
                     selectedFile.classList.remove('hidden');
 
-                    // Reset scenario state
+                    // Reset state
                     scenariosApproved = false;
                     currentScenarios = '';
+                    availableMethods = [];
+                    selectedMethods = [];
                     scenarioSection.classList.add('hidden');
                     scenarioEditor.value = '';
                     scenarioEditor.disabled = false;
@@ -1215,14 +1385,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     scenarioStatus.className = 'scenario-status draft';
                     btnApproveScenarios.disabled = false;
 
-                    // Enable Generate Scenarios, disable Generate Test
-                    btnGenerateScenarios.disabled = false;
+                    // Show method selection and request methods
+                    methodSelectionSection.classList.remove('hidden');
+                    methodList.innerHTML = '<div class="method-loading"><span class="spinner"></span> Loading methods...</div>';
+                    btnGenerateScenarios.disabled = true;
                     btnGenerateSelected.disabled = true;
+
+                    // Request method extraction
+                    vscode.postMessage({
+                        command: 'extractMethods',
+                        filePath: message.filePath
+                    });
 
                     // Auto-fill test class name
                     testClassNameInput.value = currentTestClassName;
+                    break;
 
-                    showMessage('success', 'File selected. Generate scenarios first!');
+                case 'methodsLoaded':
+                    availableMethods = message.methods || [];
+                    renderMethods(availableMethods);
+                    if (availableMethods.length > 0) {
+                        showMessage('success', availableMethods.length + ' methods found. Select methods and generate scenarios.');
+                    } else {
+                        showMessage('warning', 'No public methods found in this file.');
+                    }
                     break;
 
                 case 'scenarioGenerating':

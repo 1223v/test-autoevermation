@@ -113,11 +113,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
             vscode.window.showInformationMessage('Settings saved successfully');
         } catch (error) {
+            const errorMessage = getUserFriendlyErrorMessage(error);
             this._view?.webview.postMessage({
                 command: 'settingsSaved',
                 success: false,
-                error: getUserFriendlyErrorMessage(error)
+                error: errorMessage
             });
+            vscode.window.showErrorMessage(`Failed to save settings: ${errorMessage}`);
         }
     }
 
@@ -134,11 +136,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 features: health.features
             });
         } catch (error) {
+            const errorMessage = getUserFriendlyErrorMessage(error);
             this._view?.webview.postMessage({
                 command: 'connectionResult',
                 success: false,
-                error: getUserFriendlyErrorMessage(error)
+                error: errorMessage
             });
+            vscode.window.showErrorMessage(errorMessage);
         }
     }
 
@@ -345,6 +349,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 command: 'testError',
                 error: message
             });
+            vscode.window.showErrorMessage(`Test execution failed: ${message}`);
         }
     }
 
@@ -386,6 +391,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 command: 'testError',
                 error: message
             });
+            vscode.window.showErrorMessage(`Test execution failed: ${message}`);
         }
     }
 

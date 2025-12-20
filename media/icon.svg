@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4FC3F7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2196F3;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background circle -->
+  <circle cx="64" cy="64" r="60" fill="url(#grad1)"/>
+  <!-- Beaker shape -->
+  <path d="M45 30 L45 55 L30 90 C28 95 32 100 38 100 L90 100 C96 100 100 95 98 90 L83 55 L83 30"
+        fill="none" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Beaker top -->
+  <line x1="40" y1="30" x2="88" y2="30" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  <!-- Liquid -->
+  <path d="M35 85 L50 60 L78 60 L93 85 C95 90 92 95 87 95 L41 95 C36 95 33 90 35 85"
+        fill="rgba(255,255,255,0.3)"/>
+  <!-- Bubbles -->
+  <circle cx="50" cy="78" r="4" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="65" cy="82" r="3" fill="rgba(255,255,255,0.6)"/>
+  <circle cx="75" cy="75" r="5" fill="rgba(255,255,255,0.6)"/>
+  <!-- Check mark -->
+  <path d="M55 70 L62 77 L78 61" fill="none" stroke="#4CAF50" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

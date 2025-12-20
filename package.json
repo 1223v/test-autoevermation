@@ -1,0 +1,209 @@
+{
+  "name": "test-autoevermation",
+  "displayName": "Test-AutoEvermation",
+  "description": "AI-powered unit test generation for Spring Boot Java applications",
+  "version": "1.3.0",
+  "publisher": "1223v",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Testing",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "java",
+    "junit",
+    "test",
+    "spring",
+    "mockito",
+    "unit test",
+    "test generation"
+  ],
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/1223v/test-autoevermation"
+  },
+  "activationEvents": [
+    "onLanguage:java",
+    "onView:javaTestGenerator.sidebar"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "javaTestGenerator.generateTest",
+        "title": "Generate Unit Test",
+        "category": "Test-AutoEvermation",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "javaTestGenerator.analyzeCode",
+        "title": "Analyze Java Code",
+        "category": "Test-AutoEvermation",
+        "icon": "$(search)"
+      },
+      {
+        "command": "javaTestGenerator.checkConnection",
+        "title": "Check Server Connection",
+        "category": "Test-AutoEvermation",
+        "icon": "$(plug)"
+      }
+    ],
+    "configuration": {
+      "title": "Test-AutoEvermation",
+      "properties": {
+        "javaTestGenerator.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:8000/api/v1",
+          "description": "Base URL of the Test Generator API server"
+        },
+        "javaTestGenerator.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key for authentication (stored securely)",
+          "scope": "machine"
+        },
+        "javaTestGenerator.testFramework": {
+          "type": "string",
+          "enum": [
+            "junit4",
+            "junit5"
+          ],
+          "default": "junit5",
+          "description": "Preferred JUnit version for generated tests"
+        },
+        "javaTestGenerator.mockingFramework": {
+          "type": "string",
+          "enum": [
+            "mockito",
+            "easymock"
+          ],
+          "default": "mockito",
+          "description": "Preferred mocking framework"
+        },
+        "javaTestGenerator.coverageTarget": {
+          "type": "number",
+          "default": 80,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Target code coverage percentage"
+        },
+        "javaTestGenerator.includeEdgeCases": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include edge case tests in generation"
+        },
+        "javaTestGenerator.autoSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically save generated test files"
+        },
+        "javaTestGenerator.openAfterGeneration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open generated test file after creation"
+        },
+        "javaTestGenerator.includeDependencies": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include dependent classes in test generation request"
+        },
+        "javaTestGenerator.timeout": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 10000,
+          "maximum": 600000,
+          "description": "Request timeout in milliseconds"
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "when": "resourceLangId == java",
+          "command": "javaTestGenerator.generateTest",
+          "group": "1_modification"
+        },
+        {
+          "when": "resourceLangId == java",
+          "command": "javaTestGenerator.analyzeCode",
+          "group": "1_modification"
+        }
+      ],
+      "editor/title": [
+        {
+          "when": "resourceLangId == java",
+          "command": "javaTestGenerator.generateTest",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "when": "resourceLangId == java",
+          "command": "javaTestGenerator.generateTest",
+          "group": "7_modification"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "javaTestGenerator.generateTest",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "resourceLangId == java"
+      },
+      {
+        "command": "javaTestGenerator.analyzeCode",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "resourceLangId == java"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "javaTestGenerator",
+          "title": "Test-AutoEvermation",
+          "icon": "$(beaker)"
+        }
+      ]
+    },
+    "views": {
+      "javaTestGenerator": [
+        {
+          "type": "webview",
+          "id": "javaTestGenerator.sidebar",
+          "name": "Test-AutoEvermation",
+          "icon": "$(beaker)",
+          "contextualTitle": "Test-AutoEvermation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --production",
+    "esbuild-base": "node esbuild.js",
+    "compile": "npm run esbuild-base",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/test-electron": "^2.3.8",
+    "esbuild": "^0.27.2",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "axios": "^1.6.2"
+  },
+  "license": "MIT"
+}

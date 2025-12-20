@@ -272,10 +272,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             });
         } catch (error) {
             const message = getUserFriendlyErrorMessage(error);
+            // Reset button state
             this._view?.webview.postMessage({
-                command: 'scenarioError',
-                error: message
+                command: 'scenarioError'
             });
+            // Show VS Code notification
+            vscode.window.showErrorMessage(`Scenario generation failed: ${message}`);
         }
     }
 
@@ -651,35 +653,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             color: var(--vscode-descriptionForeground);
             margin-top: 4px;
         }
-        .drop-zone {
-            border: 2px dashed var(--vscode-input-border);
-            border-radius: 6px;
-            padding: 20px;
-            text-align: center;
-            margin-bottom: 12px;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-        .drop-zone:hover {
-            border-color: var(--vscode-focusBorder);
-            background-color: var(--vscode-editor-background);
-        }
-        .drop-zone.drag-over {
-            border-color: var(--vscode-focusBorder);
-            background-color: var(--vscode-editor-selectionBackground);
-        }
-        .drop-zone-icon {
-            font-size: 32px;
-            margin-bottom: 8px;
-            opacity: 0.7;
-        }
-        .drop-zone-text {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-        }
-        .drop-zone-text strong {
-            color: var(--vscode-foreground);
-        }
         .selected-file {
             background-color: var(--vscode-editor-background);
             border: 1px solid var(--vscode-input-border);
@@ -844,18 +817,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             background-color: #4caf50;
             color: white;
         }
-        .current-file-link {
-            text-align: center;
-            margin: -4px 0 12px 0;
-            font-size: 12px;
-        }
-        .current-file-link .link-text {
-            color: var(--vscode-textLink-foreground);
-            cursor: pointer;
-            text-decoration: none;
-        }
-        .current-file-link .link-text:hover {
-            text-decoration: underline;
+        .file-selection-options {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 12px;
         }
     </style>
 </head>
@@ -870,18 +836,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div class="section">
         <div class="section-title">Select Java File</div>
 
-        <!-- Drop Zone -->
-        <div class="drop-zone" id="dropZone">
-            <div class="drop-zone-icon">&#128196;</div>
-            <div class="drop-zone-text">
-                <strong>Drop Java file here</strong><br>
-                or click to browse
-            </div>
-        </div>
-
-        <!-- Use Current Editor File -->
-        <div class="current-file-link" id="currentFileLink">
-            <span class="link-text" id="btnUseCurrentFile">&#128196; Use current editor file</span>
+        <!-- File Selection Options -->
+        <div class="file-selection-options" id="fileSelectionOptions">
+            <button class="btn btn-primary" id="btnBrowseFile">
+                <span class="icon">&#128193;</span>
+                Browse Java File
+            </button>
+            <button class="btn btn-secondary" id="btnUseCurrentFile">
+                <span class="icon">&#128196;</span>
+                Use Current Editor
+            </button>
         </div>
 
         <!-- Selected File Display -->
@@ -1030,8 +994,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const messageArea = document.getElementById('messageArea');
 
         // File selection elements
-        const dropZone = document.getElementById('dropZone');
-        const currentFileLink = document.getElementById('currentFileLink');
+        const fileSelectionOptions = document.getElementById('fileSelectionOptions');
+        const btnBrowseFile = document.getElementById('btnBrowseFile');
         const btnUseCurrentFile = document.getElementById('btnUseCurrentFile');
         const selectedFile = document.getElementById('selectedFile');
         const selectedFileName = document.getElementById('selectedFileName');
@@ -1086,75 +1050,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ command: 'openSettings' });
         });
 
-        // File selection - click to browse
-        dropZone.addEventListener('click', () => {
+        // File selection - browse button
+        btnBrowseFile.addEventListener('click', () => {
             vscode.postMessage({ command: 'selectFile' });
-        });
-
-        // Drag and drop events - handle VS Code Explorer drops
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.classList.add('drag-over');
-        });
-
-        dropZone.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.classList.remove('drag-over');
-        });
-
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropZone.classList.remove('drag-over');
-
-            // Try to get URI from VS Code Explorer drag
-            const uriList = e.dataTransfer.getData('text/uri-list');
-            if (uriList) {
-                const uris = uriList.split('\\n').filter(u => u.trim());
-                if (uris.length > 0) {
-                    const fileUri = uris[0].trim();
-                    // Send to extension to process the URI
-                    vscode.postMessage({
-                        command: 'handleDroppedUri',
-                        uri: fileUri
-                    });
-                    return;
-                }
-            }
-
-            // Try text/plain as fallback
-            const plainText = e.dataTransfer.getData('text/plain');
-            if (plainText && plainText.includes('.java')) {
-                vscode.postMessage({
-                    command: 'handleDroppedUri',
-                    uri: plainText.trim()
-                });
-                return;
-            }
-
-            // Fallback message
-            showMessage('info', 'Drop Java files from VS Code Explorer');
-        });
-
-        // Also handle drag events on body for better UX
-        document.body.addEventListener('dragover', (e) => {
-            e.preventDefault();
-        });
-
-        document.body.addEventListener('drop', (e) => {
-            e.preventDefault();
-            const uriList = e.dataTransfer.getData('text/uri-list');
-            if (uriList) {
-                const uris = uriList.split('\\n').filter(u => u.trim());
-                if (uris.length > 0) {
-                    vscode.postMessage({
-                        command: 'handleDroppedUri',
-                        uri: uris[0].trim()
-                    });
-                }
-            }
         });
 
         // Remove selected file
@@ -1163,8 +1061,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             currentScenarios = '';
             scenariosApproved = false;
             selectedFile.classList.add('hidden');
-            dropZone.classList.remove('hidden');
-            currentFileLink.classList.remove('hidden');
+            fileSelectionOptions.classList.remove('hidden');
             scenarioSection.classList.add('hidden');
             btnGenerateScenarios.disabled = true;
             btnGenerateSelected.disabled = true;
@@ -1261,10 +1158,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     testFrameworkSelect.value = message.testFramework || 'junit5';
                     mockingFrameworkSelect.value = message.mockingFramework || 'mockito';
 
-                    // Enable/disable buttons based on configuration
+                    // Update connection status based on configuration
                     const isConfigured = message.isConfigured;
-                    btnGenerate.disabled = !isConfigured;
-
                     if (!isConfigured) {
                         updateConnectionStatus('unknown', 'Not configured');
                     }
@@ -1273,7 +1168,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'settingsSaved':
                     if (message.success) {
                         showMessage('success', 'Settings saved!');
-                        btnGenerate.disabled = false;
                     } else {
                         showMessage('error', message.error || 'Failed to save settings');
                     }
@@ -1292,8 +1186,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                     if (message.success) {
                         updateConnectionStatus('connected', 'Connected (v' + message.version + ')');
-                        btnGenerate.disabled = false;
-
                         if (message.features && message.features.length > 0) {
                             showMessage('success', 'Features: ' + message.features.join(', '));
                         }
@@ -1310,8 +1202,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     selectedFilePath.textContent = message.filePath;
                     selectedFilePath.title = message.filePath;
 
-                    dropZone.classList.add('hidden');
-                    currentFileLink.classList.add('hidden');
+                    fileSelectionOptions.classList.add('hidden');
                     selectedFile.classList.remove('hidden');
 
                     // Reset scenario state
@@ -1364,7 +1255,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     scenarioSpinner.classList.add('hidden');
                     btnGenerateScenarios.disabled = false;
                     btnRegenerateScenarios.disabled = false;
-                    showMessage('error', message.error || 'Failed to generate scenarios');
+                    // Error is shown as VS Code notification, just reset button state
                     break;
 
                 case 'testRunning':

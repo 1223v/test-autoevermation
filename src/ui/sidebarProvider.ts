@@ -74,6 +74,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'generateScenarios':
                     await this._generateScenarios(message.filePath);
                     break;
+                case 'useCurrentFile':
+                    await this._useCurrentFile();
+                    break;
             }
         });
 
@@ -154,6 +157,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 fileName: fileName
             });
         }
+    }
+
+    private async _useCurrentFile(): Promise<void> {
+        const editor = vscode.window.activeTextEditor;
+
+        if (!editor) {
+            vscode.window.showWarningMessage('No file is currently open in the editor');
+            return;
+        }
+
+        const filePath = editor.document.uri.fsPath;
+
+        if (!filePath.endsWith('.java')) {
+            vscode.window.showWarningMessage('Current file is not a Java file');
+            return;
+        }
+
+        const fileName = filePath.split(/[/\\]/).pop() || '';
+
+        this._view?.webview.postMessage({
+            command: 'fileSelected',
+            filePath: filePath,
+            fileName: fileName
+        });
     }
 
     private async _generateTestForFile(filePath: string, scenarios?: string): Promise<void> {
@@ -817,6 +844,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             background-color: #4caf50;
             color: white;
         }
+        .current-file-link {
+            text-align: center;
+            margin: -4px 0 12px 0;
+            font-size: 12px;
+        }
+        .current-file-link .link-text {
+            color: var(--vscode-textLink-foreground);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .current-file-link .link-text:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -835,8 +875,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="drop-zone-icon">&#128196;</div>
             <div class="drop-zone-text">
                 <strong>Drop Java file here</strong><br>
-                from Explorer or click to browse
+                or click to browse
             </div>
+        </div>
+
+        <!-- Use Current Editor File -->
+        <div class="current-file-link" id="currentFileLink">
+            <span class="link-text" id="btnUseCurrentFile">&#128196; Use current editor file</span>
         </div>
 
         <!-- Selected File Display -->
@@ -913,17 +958,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     <div class="divider"></div>
 
-    <!-- Quick Actions -->
-    <div class="section">
-        <div class="section-title">Current Editor</div>
-        <button class="btn btn-secondary" id="btnGenerate">
-            <span class="icon">&#9881;</span>
-            Generate from Current File
-        </button>
-    </div>
-
-    <div class="divider"></div>
-
     <!-- Server Settings -->
     <div class="section">
         <div class="section-title">Server Settings</div>
@@ -988,7 +1022,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const mockingFrameworkSelect = document.getElementById('mockingFramework');
         const btnSave = document.getElementById('btnSave');
         const btnTestConnection = document.getElementById('btnTestConnection');
-        const btnGenerate = document.getElementById('btnGenerate');
         const btnOpenSettings = document.getElementById('btnOpenSettings');
         const connectionDot = document.getElementById('connectionDot');
         const connectionText = document.getElementById('connectionText');
@@ -998,6 +1031,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         // File selection elements
         const dropZone = document.getElementById('dropZone');
+        const currentFileLink = document.getElementById('currentFileLink');
+        const btnUseCurrentFile = document.getElementById('btnUseCurrentFile');
         const selectedFile = document.getElementById('selectedFile');
         const selectedFileName = document.getElementById('selectedFileName');
         const selectedFilePath = document.getElementById('selectedFilePath');
@@ -1043,8 +1078,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ command: 'testConnection' });
         });
 
-        btnGenerate.addEventListener('click', () => {
-            vscode.postMessage({ command: 'generateTest' });
+        btnUseCurrentFile.addEventListener('click', () => {
+            vscode.postMessage({ command: 'useCurrentFile' });
         });
 
         btnOpenSettings.addEventListener('click', () => {
@@ -1129,6 +1164,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             scenariosApproved = false;
             selectedFile.classList.add('hidden');
             dropZone.classList.remove('hidden');
+            currentFileLink.classList.remove('hidden');
             scenarioSection.classList.add('hidden');
             btnGenerateScenarios.disabled = true;
             btnGenerateSelected.disabled = true;
@@ -1275,6 +1311,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     selectedFilePath.title = message.filePath;
 
                     dropZone.classList.add('hidden');
+                    currentFileLink.classList.add('hidden');
                     selectedFile.classList.remove('hidden');
 
                     // Reset scenario state

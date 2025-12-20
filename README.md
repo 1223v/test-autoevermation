@@ -46,6 +46,7 @@ VS Code 왼쪽 Activity Bar에서 **비커 아이콘**을 클릭하여 Test-Auto
 |------|------|
 | **드래그 앤 드롭** | VS Code Explorer에서 Java 파일을 사이드바로 드래그하여 선택 |
 | **클릭하여 찾아보기** | Drop Zone을 클릭하면 파일 선택 다이얼로그가 열림 |
+| **현재 파일 사용** | "Use current editor file" 링크 클릭 시 현재 에디터에 열린 파일 선택 |
 | **선택된 파일 표시** | 파일 선택 후 파일명과 경로가 표시됨 |
 | **X 버튼** | 선택된 파일을 제거하고 다른 파일 선택 가능 |
 
@@ -95,17 +96,7 @@ VS Code 왼쪽 Activity Bar에서 **비커 아이콘**을 클릭하여 Test-Auto
 
 ---
 
-### 4. 현재 에디터 (Current Editor)
-
-VS Code에서 현재 열려있는 파일을 대상으로 작업합니다.
-
-| 버튼 | 기능 | 단축키 |
-|------|------|--------|
-| **Generate from Current File** | 현재 에디터에 열린 Java 파일로 테스트 생성 | `Ctrl+Shift+T` |
-
----
-
-### 5. 서버 설정 (Server Settings)
+### 4. 서버 설정 (Server Settings)
 
 API 서버 연결 정보를 설정합니다.
 
@@ -121,7 +112,7 @@ API 서버 연결 정보를 설정합니다.
 
 ---
 
-### 6. 생성 옵션 (Generation Options)
+### 5. 생성 옵션 (Generation Options)
 
 테스트 생성 시 사용할 옵션을 설정합니다.
 

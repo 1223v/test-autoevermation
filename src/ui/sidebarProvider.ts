@@ -976,11 +976,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <!-- File Selection Options -->
         <div class="file-selection-options" id="fileSelectionOptions">
             <button class="btn btn-primary" id="btnBrowseFile">
-                <span class="icon">&#128193;</span>
+                <span class="icon">&#8862;</span>
                 Browse Java File
             </button>
             <button class="btn btn-secondary" id="btnUseCurrentFile">
-                <span class="icon">&#128196;</span>
+                <span class="icon">&#9634;</span>
                 Use Current Editor
             </button>
         </div>
@@ -1013,7 +1013,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         <!-- Step 1: Generate Scenarios -->
         <button class="btn btn-primary" id="btnGenerateScenarios" disabled>
-            <span class="icon">&#128221;</span>
+            <span class="icon">&#8801;</span>
             <span id="generateScenariosText">Generate Scenarios</span>
             <span class="spinner hidden" id="scenarioSpinner"></span>
         </button>

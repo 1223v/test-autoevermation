@@ -291,7 +291,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     testFramework: this._settings.getTestFramework(),
                     mockingFramework: this._settings.getMockingFramework(),
                     coverageTarget: this._settings.getCoverageTarget(),
-                    includeEdgeCases: this._settings.getIncludeEdgeCases()
+                    includeEdgeCases: this._settings.includeEdgeCases()
                 },
                 selectedMethods: selectedMethods
             });

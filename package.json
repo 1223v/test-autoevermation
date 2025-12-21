@@ -2,7 +2,7 @@
   "name": "test-autoevermation",
   "displayName": "Test-AutoEvermation",
   "description": "AI-powered unit test generation for Spring Boot Java applications",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "publisher": "1223v",
   "engines": {
     "vscode": "^1.85.0"

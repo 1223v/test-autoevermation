@@ -343,6 +343,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 success: success,
                 details: this._formatTestOutput(result)
             });
+
+            if (success) {
+                vscode.window.showInformationMessage('All tests passed!');
+            } else {
+                vscode.window.showWarningMessage('Some tests failed. Check the results below.');
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             this._view?.webview.postMessage({
@@ -385,6 +391,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 success: success,
                 details: this._formatTestOutput(result)
             });
+
+            if (success) {
+                vscode.window.showInformationMessage('All tests passed!');
+            } else {
+                vscode.window.showWarningMessage('Some tests failed. Check the results below.');
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             this._view?.webview.postMessage({
@@ -1342,8 +1354,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'settingsSaved':
                     if (message.success) {
                         showMessage('success', 'Settings saved!');
-                    } else {
-                        showMessage('error', message.error || 'Failed to save settings');
                     }
                     break;
 
@@ -1365,7 +1375,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         }
                     } else {
                         updateConnectionStatus('disconnected', message.error || 'Connection failed');
-                        showMessage('error', message.error || 'Connection failed');
                     }
                     break;
 
@@ -1476,8 +1485,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                     if (isSuccess) {
                         showMessage('success', 'All tests passed!');
-                    } else {
-                        showMessage('error', 'Some tests failed');
                     }
                     break;
 
@@ -1486,7 +1493,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     runTestSpinner.classList.add('hidden');
                     btnRunTest.disabled = false;
                     btnRunAllTests.disabled = false;
-                    showMessage('error', message.error || 'Failed to run tests');
                     break;
             }
         });

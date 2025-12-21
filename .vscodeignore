@@ -12,3 +12,4 @@ node_modules/**
 esbuild.js
 *.vsix
 .claude/**
+nul

@@ -179,12 +179,13 @@ export class ApiClient {
             case 401:
                 return new ApiKeyError(errorInfo?.message || 'Invalid or expired API key');
 
-            case 429:
+            case 429: {
                 const retryAfter = parseInt(error.response.headers['retry-after'] || '0');
                 return new RateLimitError(
                     errorInfo?.message || 'Rate limit exceeded',
                     retryAfter > 0 ? retryAfter : undefined
                 );
+            }
 
             case 400:
                 if (errorInfo?.code === ApiErrorCode.INVALID_JAVA_SYNTAX) {

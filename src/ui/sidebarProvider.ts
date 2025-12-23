@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { spawn } from 'child_process';
 import { ApiClient } from '../api/client';
 import { SettingsManager } from '../config/settings';
 import { getUserFriendlyErrorMessage } from '../api/errors';
@@ -88,12 +89,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._sendCurrentSettings();
     }
 
-    private _sendCurrentSettings(): void {
+    private async _sendCurrentSettings(): Promise<void> {
         if (this._view) {
+            // Get API key asynchronously from secure storage
+            const apiKey = await this._settings.getApiKeyAsync();
+            // Only send masked API key to webview for security
+            const maskedApiKey = apiKey ? '********' + apiKey.slice(-4) : '';
+            const hasApiKey = Boolean(apiKey);
+
             this._view.webview.postMessage({
                 command: 'settingsLoaded',
                 apiUrl: this._settings.getApiUrl(),
-                apiKey: this._settings.getApiKey(),
+                apiKey: maskedApiKey,
+                hasApiKey: hasApiKey,
                 testFramework: this._settings.getTestFramework(),
                 mockingFramework: this._settings.getMockingFramework(),
                 isConfigured: this._settings.isConfigured()
@@ -311,10 +319,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    /**
+     * Validates test class name to prevent command injection
+     * Only allows valid Java class name characters
+     */
+    private _validateTestClassName(name: string): boolean {
+        // Java class names: start with letter or underscore, followed by letters, digits, underscores, or $
+        // Also allow dots for fully qualified names and * for wildcards
+        const validPattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*(\.[a-zA-Z_$][a-zA-Z0-9_$]*)*\*?$/;
+        return validPattern.test(name) && name.length <= 256;
+    }
+
     private async _runTest(testClassName: string): Promise<void> {
         this._view?.webview.postMessage({ command: 'testRunning' });
 
         try {
+            // Validate test class name to prevent command injection
+            if (!this._validateTestClassName(testClassName)) {
+                throw new Error('Invalid test class name. Only valid Java class names are allowed.');
+            }
+
             const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
             if (!workspaceFolder) {
                 throw new Error('No workspace folder found');
@@ -322,19 +346,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
             const buildTool = await this._detectBuildTool(workspaceFolder.uri);
             let command: string;
+            let args: string[];
 
             if (buildTool === 'gradle') {
-                command = `./gradlew test --tests "${testClassName}" --info`;
                 if (process.platform === 'win32') {
-                    command = `gradlew.bat test --tests "${testClassName}" --info`;
+                    command = 'gradlew.bat';
+                } else {
+                    command = './gradlew';
                 }
+                args = ['test', '--tests', testClassName, '--info'];
             } else if (buildTool === 'maven') {
-                command = `mvn test -Dtest=${testClassName}`;
+                command = 'mvn';
+                args = ['test', `-Dtest=${testClassName}`];
             } else {
                 throw new Error('No Maven or Gradle build file found');
             }
 
-            const result = await this._executeCommand(command, workspaceFolder.uri.fsPath);
+            const result = await this._executeCommand(command, args, workspaceFolder.uri.fsPath);
 
             const success = this._parseTestResult(result, buildTool);
 
@@ -370,19 +398,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
             const buildTool = await this._detectBuildTool(workspaceFolder.uri);
             let command: string;
+            let args: string[];
 
             if (buildTool === 'gradle') {
-                command = './gradlew test --info';
                 if (process.platform === 'win32') {
-                    command = 'gradlew.bat test --info';
+                    command = 'gradlew.bat';
+                } else {
+                    command = './gradlew';
                 }
+                args = ['test', '--info'];
             } else if (buildTool === 'maven') {
-                command = 'mvn test';
+                command = 'mvn';
+                args = ['test'];
             } else {
                 throw new Error('No Maven or Gradle build file found');
             }
 
-            const result = await this._executeCommand(command, workspaceFolder.uri.fsPath);
+            const result = await this._executeCommand(command, args, workspaceFolder.uri.fsPath);
 
             const success = this._parseTestResult(result, buildTool);
 
@@ -429,22 +461,49 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return null;
     }
 
-    private _executeCommand(command: string, cwd: string): Promise<string> {
+    /**
+     * Executes a command safely using spawn (no shell) to prevent command injection
+     */
+    private _executeCommand(command: string, args: string[], cwd: string): Promise<string> {
         return new Promise((resolve, reject) => {
-            const { exec } = require('child_process');
+            // Use spawn with shell: false (default) to prevent command injection
+            const child = spawn(command, args, {
+                cwd,
+                shell: false,  // Explicitly disable shell to prevent injection
+                env: { ...process.env },  // Inherit environment but don't expose sensitive vars
+                windowsHide: true
+            });
 
-            exec(command, { cwd, maxBuffer: 1024 * 1024 * 10 }, (error: Error | null, stdout: string, stderr: string) => {
-                if (error) {
-                    // Even with errors, we might have test output
-                    if (stdout || stderr) {
-                        resolve(stdout + '\n' + stderr);
-                    } else {
-                        reject(error);
-                    }
+            let stdout = '';
+            let stderr = '';
+
+            child.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+
+            child.stderr.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+
+            child.on('error', (error: Error) => {
+                reject(error);
+            });
+
+            child.on('close', (code: number) => {
+                const output = stdout + '\n' + stderr;
+                // Even with non-zero exit code, we might have useful test output
+                if (code !== 0 && !stdout && !stderr) {
+                    reject(new Error(`Command exited with code ${code}`));
                 } else {
-                    resolve(stdout + '\n' + stderr);
+                    resolve(output);
                 }
             });
+
+            // Set timeout to prevent hanging processes (5 minutes)
+            setTimeout(() => {
+                child.kill('SIGTERM');
+                reject(new Error('Command timed out after 5 minutes'));
+            }, 5 * 60 * 1000);
         });
     }
 
@@ -522,410 +581,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private _getHtmlContent(webview: vscode.Webview): string {
         const nonce = this._getNonce();
 
+        // Get URI for external CSS file
+        const styleUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'sidebar.css')
+        );
+
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https:;">
     <title>Test-AutoEvermation</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            color: var(--vscode-foreground);
-            background-color: var(--vscode-sideBar-background);
-            padding: 12px;
-        }
-        .section {
-            margin-bottom: 20px;
-        }
-        .section-title {
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            color: var(--vscode-sideBarSectionHeader-foreground);
-            margin-bottom: 10px;
-            letter-spacing: 0.5px;
-        }
-        .input-group {
-            margin-bottom: 12px;
-        }
-        .input-group label {
-            display: block;
-            margin-bottom: 4px;
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-        }
-        input[type="text"],
-        input[type="password"],
-        select {
-            width: 100%;
-            padding: 6px 8px;
-            border: 1px solid var(--vscode-input-border);
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border-radius: 2px;
-            font-size: 13px;
-        }
-        input[type="text"]:focus,
-        input[type="password"]:focus,
-        select:focus {
-            outline: 1px solid var(--vscode-focusBorder);
-            border-color: var(--vscode-focusBorder);
-        }
-        .btn {
-            width: 100%;
-            padding: 8px 12px;
-            border: none;
-            border-radius: 2px;
-            font-size: 13px;
-            cursor: pointer;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-        }
-        .btn-primary {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-        }
-        .btn-primary:hover {
-            background-color: var(--vscode-button-hoverBackground);
-        }
-        .btn-secondary {
-            background-color: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-        }
-        .btn-secondary:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
-        }
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        .status {
-            padding: 8px 10px;
-            border-radius: 3px;
-            font-size: 12px;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .status.success {
-            background-color: var(--vscode-testing-iconPassed);
-            color: white;
-        }
-        .status.error {
-            background-color: var(--vscode-testing-iconFailed);
-            color: white;
-        }
-        .status.warning {
-            background-color: var(--vscode-editorWarning-foreground);
-            color: white;
-        }
-        .status.info {
-            background-color: var(--vscode-textLink-foreground);
-            color: white;
-        }
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background-color: currentColor;
-        }
-        .connection-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px;
-            background-color: var(--vscode-editor-background);
-            border-radius: 3px;
-            margin-bottom: 12px;
-            font-size: 12px;
-        }
-        .connection-status .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        .connection-status .dot.connected {
-            background-color: #4caf50;
-        }
-        .connection-status .dot.disconnected {
-            background-color: #f44336;
-        }
-        .connection-status .dot.unknown {
-            background-color: #ff9800;
-        }
-        .divider {
-            height: 1px;
-            background-color: var(--vscode-sideBarSectionHeader-border);
-            margin: 16px 0;
-        }
-        .info-text {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 4px;
-        }
-        .icon {
-            font-size: 16px;
-        }
-        .spinner {
-            width: 14px;
-            height: 14px;
-            border: 2px solid transparent;
-            border-top-color: currentColor;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        .hidden {
-            display: none !important;
-        }
-        .feature-list {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 4px;
-        }
-        .selected-file {
-            background-color: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
-            padding: 10px;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .selected-file-icon {
-            font-size: 20px;
-        }
-        .selected-file-info {
-            flex: 1;
-            overflow: hidden;
-        }
-        .selected-file-name {
-            font-size: 13px;
-            font-weight: 500;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .selected-file-path {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .selected-file-remove {
-            background: none;
-            border: none;
-            color: var(--vscode-descriptionForeground);
-            cursor: pointer;
-            font-size: 16px;
-            padding: 4px;
-        }
-        .selected-file-remove:hover {
-            color: var(--vscode-errorForeground);
-        }
-        .test-result {
-            background-color: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
-            padding: 10px;
-            margin-top: 10px;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        .test-result.success {
-            border-color: #4caf50;
-        }
-        .test-result.failure {
-            border-color: #f44336;
-        }
-        .test-result-header {
-            font-weight: 600;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .test-result-header.success {
-            color: #4caf50;
-        }
-        .test-result-header.failure {
-            color: #f44336;
-        }
-        .test-result-details {
-            font-family: monospace;
-            font-size: 11px;
-            white-space: pre-wrap;
-            color: var(--vscode-descriptionForeground);
-        }
-        .btn-success {
-            background-color: #4caf50;
-            color: white;
-        }
-        .btn-success:hover {
-            background-color: #45a049;
-        }
-        .btn-success:disabled {
-            background-color: #81c784;
-            opacity: 0.6;
-        }
-        .scenario-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-            margin-top: 12px;
-        }
-        .scenario-status {
-            font-size: 10px;
-            padding: 2px 8px;
-            border-radius: 10px;
-            background-color: var(--vscode-badge-background);
-            color: var(--vscode-badge-foreground);
-        }
-        .scenario-status.approved {
-            background-color: #4caf50;
-            color: white;
-        }
-        .scenario-status.draft {
-            background-color: #ff9800;
-            color: white;
-        }
-        .scenario-editor {
-            width: 100%;
-            min-height: 150px;
-            max-height: 300px;
-            padding: 10px;
-            border: 1px solid var(--vscode-input-border);
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 12px;
-            resize: vertical;
-            line-height: 1.5;
-        }
-        .scenario-editor:focus {
-            outline: 1px solid var(--vscode-focusBorder);
-            border-color: var(--vscode-focusBorder);
-        }
-        .scenario-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 8px;
-        }
-        .scenario-actions .btn {
-            flex: 1;
-        }
-        .workflow-step {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 8px;
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-        }
-        .workflow-step .step-number {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background-color: var(--vscode-badge-background);
-            color: var(--vscode-badge-foreground);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            font-weight: 600;
-        }
-        .workflow-step .step-number.active {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-        }
-        .workflow-step .step-number.completed {
-            background-color: #4caf50;
-            color: white;
-        }
-        .file-selection-options {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-bottom: 12px;
-        }
-        .method-selection-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-        .method-selection-actions {
-            display: flex;
-            gap: 8px;
-        }
-        .link-btn {
-            color: var(--vscode-textLink-foreground);
-            cursor: pointer;
-            font-size: 11px;
-        }
-        .link-btn:hover {
-            text-decoration: underline;
-        }
-        .method-list {
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
-            padding: 8px;
-            margin-bottom: 12px;
-            background-color: var(--vscode-input-background);
-        }
-        .method-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 4px 0;
-            font-size: 12px;
-        }
-        .method-item input[type="checkbox"] {
-            margin: 0;
-            cursor: pointer;
-        }
-        .method-item label {
-            cursor: pointer;
-            font-family: monospace;
-            word-break: break-all;
-        }
-        .method-item:hover {
-            background-color: var(--vscode-list-hoverBackground);
-        }
-        .method-loading {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--vscode-descriptionForeground);
-            font-size: 12px;
-        }
-        .method-count {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 4px;
-        }
-    </style>
+    <link rel="stylesheet" href="${styleUri}">
 </head>
 <body>
     <!-- Connection Status -->

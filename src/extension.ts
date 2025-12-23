@@ -16,8 +16,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     outputChannel.appendLine('Test-AutoEvermation extension is activating...');
 
     try {
-        // Initialize settings manager
-        const settings = new SettingsManager();
+        // Initialize settings manager with secure storage
+        const settings = new SettingsManager(context.secrets);
         context.subscriptions.push({
             dispose: () => settings.dispose()
         });

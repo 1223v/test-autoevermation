@@ -9,7 +9,11 @@ import {
     AnalyzeResponse,
     HealthCheckResponse,
     ApiErrorResponse,
-    ApiErrorCode
+    ApiErrorCode,
+    TestabilityCheckRequest,
+    TestabilityCheckResponse,
+    ImproveCoverageRequest,
+    ImproveCoverageResponse
 } from './types';
 import {
     ApiError,
@@ -145,6 +149,50 @@ export class ApiClient {
                 request
             );
             return response.data;
+        } catch (error) {
+            throw this.handleError(error as AxiosError);
+        }
+    }
+
+    /**
+     * Checks if the code is testable and provides refactoring advice if not
+     */
+    public async checkTestability(request: TestabilityCheckRequest): Promise<TestabilityCheckResponse> {
+        try {
+            const response = await this.client.post<TestabilityCheckResponse | ApiErrorResponse>(
+                '/check-testability',
+                request
+            );
+
+            const data = response.data;
+
+            if ('success' in data && !data.success) {
+                throw ApiError.fromApiError((data as ApiErrorResponse).error);
+            }
+
+            return data as TestabilityCheckResponse;
+        } catch (error) {
+            throw this.handleError(error as AxiosError);
+        }
+    }
+
+    /**
+     * Improves test coverage by generating additional test cases
+     */
+    public async improveCoverage(request: ImproveCoverageRequest): Promise<ImproveCoverageResponse> {
+        try {
+            const response = await this.client.post<ImproveCoverageResponse | ApiErrorResponse>(
+                '/improve-coverage',
+                request
+            );
+
+            const data = response.data;
+
+            if ('success' in data && !data.success) {
+                throw ApiError.fromApiError((data as ApiErrorResponse).error);
+            }
+
+            return data as ImproveCoverageResponse;
         } catch (error) {
             throw this.handleError(error as AxiosError);
         }

@@ -4,6 +4,10 @@ import { ApiClient } from '../api/client';
 import { SettingsManager } from '../config/settings';
 import { getUserFriendlyErrorMessage } from '../api/errors';
 import { extractMethods } from '../services/javaParser';
+import { AstCacheManager, CachedAstEntry } from '../services/astCacheManager';
+import { JacocoRunner } from '../services/jacocoRunner';
+import { PathResolver } from '../services/pathResolver';
+import { JacocoCoverageResult } from '../api/types';
 
 /**
  * Provides the sidebar webview panel
@@ -15,15 +19,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private _apiClient: ApiClient;
     private _settings: SettingsManager;
     private _extensionUri: vscode.Uri;
+    private _astCacheManager: AstCacheManager;
 
     constructor(
         extensionUri: vscode.Uri,
         apiClient: ApiClient,
-        settings: SettingsManager
+        settings: SettingsManager,
+        astCacheManager: AstCacheManager
     ) {
         this._extensionUri = extensionUri;
         this._apiClient = apiClient;
         this._settings = settings;
+        this._astCacheManager = astCacheManager;
     }
 
     public resolveWebviewView(
@@ -81,6 +88,42 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'extractMethods':
                     await this._extractMethods(message.filePath);
+                    break;
+                case 'checkAstCache':
+                    await this._checkAstCache(message.filePath);
+                    break;
+                case 'analyzeAst':
+                    await this._analyzeAst(message.filePath);
+                    break;
+                case 'reanalyzeAst':
+                    await this._reanalyzeAst(message.filePath);
+                    break;
+                case 'useCachedAst':
+                    await this._useCachedAst(message.filePath);
+                    break;
+                case 'checkTestability':
+                    await this._checkTestability(message.filePath, message.selectedMethods);
+                    break;
+                case 'runTestWithCoverage':
+                    await this._runTestWithCoverage(message.testClassName);
+                    break;
+                case 'checkJacocoConfig':
+                    await this._checkJacocoConfig();
+                    break;
+                case 'openCoverageReport':
+                    await this._openCoverageReport();
+                    break;
+                case 'improveCoverage':
+                    await this._improveCoverage(
+                        message.sourceFilePath,
+                        message.testFilePath,
+                        message.selectedMethods,
+                        message.currentCoverage,
+                        message.targetCoverage
+                    );
+                    break;
+                case 'applyImprovement':
+                    await this._applyImprovement(message.testFilePath, message.testCode);
                     break;
             }
         });
@@ -264,6 +307,443 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 methods: []
             });
             vscode.window.showErrorMessage('Failed to extract methods from file');
+        }
+    }
+
+    /**
+     * Checks if AST analysis is cached for the given file
+     */
+    private async _checkAstCache(filePath: string): Promise<void> {
+        try {
+            const uri = vscode.Uri.file(filePath);
+            const contentBuffer = await vscode.workspace.fs.readFile(uri);
+            const content = new TextDecoder().decode(contentBuffer);
+
+            const cacheResult = await this._astCacheManager.checkCache(filePath, content);
+
+            this._view?.webview.postMessage({
+                command: 'astCacheChecked',
+                hasCachedAst: cacheResult.hasCachedAst,
+                astData: cacheResult.astData,
+                isFileModified: cacheResult.isFileModified
+            });
+        } catch (error) {
+            this._view?.webview.postMessage({
+                command: 'astCacheChecked',
+                hasCachedAst: false,
+                astData: null,
+                isFileModified: false
+            });
+        }
+    }
+
+    /**
+     * Analyzes AST and saves to cache (for new analysis)
+     */
+    private async _analyzeAst(filePath: string): Promise<void> {
+        this._view?.webview.postMessage({ command: 'astAnalyzing' });
+
+        try {
+            const uri = vscode.Uri.file(filePath);
+            const contentBuffer = await vscode.workspace.fs.readFile(uri);
+            const content = new TextDecoder().decode(contentBuffer);
+
+            const astEntry = await this._astCacheManager.analyzeAndSave(filePath, content);
+
+            this._view?.webview.postMessage({
+                command: 'astAnalyzed',
+                astData: astEntry
+            });
+
+            vscode.window.showInformationMessage(
+                `AST analysis completed: ${astEntry.ast.methodCount} methods found`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'astAnalyzeError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`AST analysis failed: ${message}`);
+        }
+    }
+
+    /**
+     * Clears cache and re-analyzes AST
+     */
+    private async _reanalyzeAst(filePath: string): Promise<void> {
+        this._view?.webview.postMessage({ command: 'astAnalyzing' });
+
+        try {
+            const uri = vscode.Uri.file(filePath);
+            const contentBuffer = await vscode.workspace.fs.readFile(uri);
+            const content = new TextDecoder().decode(contentBuffer);
+
+            const astEntry = await this._astCacheManager.reanalyze(filePath, content);
+
+            this._view?.webview.postMessage({
+                command: 'astAnalyzed',
+                astData: astEntry
+            });
+
+            vscode.window.showInformationMessage(
+                `AST re-analysis completed: ${astEntry.ast.methodCount} methods found`
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'astAnalyzeError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`AST re-analysis failed: ${message}`);
+        }
+    }
+
+    /**
+     * Uses cached AST data (confirms selection)
+     */
+    private async _useCachedAst(filePath: string): Promise<void> {
+        try {
+            const cachedAst = await this._astCacheManager.getCachedAst(filePath);
+
+            if (cachedAst) {
+                this._view?.webview.postMessage({
+                    command: 'astSelected',
+                    astData: cachedAst
+                });
+            } else {
+                vscode.window.showWarningMessage('No cached AST found. Please analyze first.');
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage('Failed to load cached AST');
+        }
+    }
+
+    /**
+     * Gets the currently selected AST data for API requests
+     */
+    public async getSelectedAstData(filePath: string): Promise<CachedAstEntry | null> {
+        return this._astCacheManager.getCachedAst(filePath);
+    }
+
+    /**
+     * Checks if the selected methods are testable
+     */
+    private async _checkTestability(filePath: string, selectedMethods: string[]): Promise<void> {
+        if (!filePath || !selectedMethods || selectedMethods.length === 0) {
+            this._view?.webview.postMessage({
+                command: 'testabilityError',
+                error: 'No file or methods selected'
+            });
+            return;
+        }
+
+        this._view?.webview.postMessage({ command: 'testabilityChecking' });
+
+        try {
+            const uri = vscode.Uri.file(filePath);
+            const contentBuffer = await vscode.workspace.fs.readFile(uri);
+            const content = new TextDecoder().decode(contentBuffer);
+            const fileName = filePath.split(/[/\\]/).pop() || '';
+
+            // Extract package name from source
+            const packageMatch = content.match(/^\s*package\s+([\w.]+)\s*;/m);
+            const packageName = packageMatch ? packageMatch[1] : '';
+
+            // Get cached AST data
+            const cachedAst = await this._astCacheManager.getCachedAst(filePath);
+
+            const response = await this._apiClient.checkTestability({
+                sourceFile: {
+                    fileName,
+                    packageName,
+                    content
+                },
+                cachedAst: cachedAst?.ast ? {
+                    className: cachedAst.ast.className,
+                    packageName: cachedAst.ast.packageName,
+                    methodCount: cachedAst.ast.methodCount,
+                    publicMethods: cachedAst.ast.publicMethods,
+                    privateMethods: cachedAst.ast.privateMethods,
+                    protectedMethods: cachedAst.ast.protectedMethods,
+                    dependencies: cachedAst.ast.dependencies,
+                    imports: cachedAst.ast.imports,
+                    annotations: cachedAst.ast.annotations,
+                    injectedBeans: cachedAst.ast.injectedBeans,
+                    complexity: cachedAst.ast.complexity
+                } : undefined,
+                selectedMethods
+            });
+
+            this._view?.webview.postMessage({
+                command: 'testabilityResult',
+                testable: response.testable,
+                reasons: response.reasons,
+                refactoringAdvice: response.refactoringAdvice
+            });
+
+            if (response.testable) {
+                vscode.window.showInformationMessage('Code is testable! You can proceed to generate scenarios.');
+            } else {
+                vscode.window.showWarningMessage('Code has testability issues. Please review the suggestions.');
+            }
+        } catch (error) {
+            const message = getUserFriendlyErrorMessage(error);
+            this._view?.webview.postMessage({
+                command: 'testabilityError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`Testability check failed: ${message}`);
+        }
+    }
+
+    /**
+     * Runs tests with Jacoco coverage analysis
+     */
+    private async _runTestWithCoverage(testClassName: string): Promise<void> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            this._view?.webview.postMessage({
+                command: 'coverageError',
+                error: 'No workspace folder found'
+            });
+            return;
+        }
+
+        // Validate test class name
+        if (!this._validateTestClassName(testClassName)) {
+            this._view?.webview.postMessage({
+                command: 'coverageError',
+                error: 'Invalid test class name'
+            });
+            return;
+        }
+
+        this._view?.webview.postMessage({ command: 'coverageRunning' });
+
+        try {
+            const jacocoRunner = new JacocoRunner(workspaceFolder);
+
+            // Check if Jacoco is configured
+            const isConfigured = await jacocoRunner.isJacocoConfigured();
+            if (!isConfigured) {
+                this._view?.webview.postMessage({
+                    command: 'coverageError',
+                    error: 'Jacoco is not configured in your project. Please add the Jacoco plugin to your build configuration.'
+                });
+                vscode.window.showWarningMessage('Jacoco is not configured. Please add Jacoco plugin to your build file.');
+                return;
+            }
+
+            const result = await jacocoRunner.runTestsWithCoverage(testClassName);
+
+            if (result.success && result.coverage) {
+                const targetCoverage = this._settings.getCoverageTarget();
+                const meetsTarget = result.coverage.overallCoverage >= targetCoverage;
+
+                this._view?.webview.postMessage({
+                    command: 'coverageResult',
+                    coverage: result.coverage,
+                    meetsTarget,
+                    targetCoverage,
+                    reportPath: result.reportPath
+                });
+
+                if (meetsTarget) {
+                    vscode.window.showInformationMessage(
+                        `Coverage: ${result.coverage.overallCoverage.toFixed(1)}% (Target: ${targetCoverage}%) - Target met!`
+                    );
+                } else {
+                    vscode.window.showWarningMessage(
+                        `Coverage: ${result.coverage.overallCoverage.toFixed(1)}% (Target: ${targetCoverage}%) - Below target`
+                    );
+                }
+            } else {
+                this._view?.webview.postMessage({
+                    command: 'coverageError',
+                    error: result.error || 'Coverage analysis failed'
+                });
+                vscode.window.showErrorMessage(`Coverage analysis failed: ${result.error}`);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'coverageError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`Coverage analysis failed: ${message}`);
+        }
+    }
+
+    /**
+     * Checks if Jacoco is configured in the project
+     */
+    private async _checkJacocoConfig(): Promise<void> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            this._view?.webview.postMessage({
+                command: 'jacocoConfigResult',
+                configured: false,
+                error: 'No workspace folder found'
+            });
+            return;
+        }
+
+        try {
+            const jacocoRunner = new JacocoRunner(workspaceFolder);
+            const isConfigured = await jacocoRunner.isJacocoConfigured();
+            const buildTool = await jacocoRunner.detectBuildTool();
+
+            this._view?.webview.postMessage({
+                command: 'jacocoConfigResult',
+                configured: isConfigured,
+                buildTool
+            });
+        } catch (error) {
+            this._view?.webview.postMessage({
+                command: 'jacocoConfigResult',
+                configured: false,
+                error: 'Failed to check Jacoco configuration'
+            });
+        }
+    }
+
+    /**
+     * Opens the HTML coverage report
+     */
+    private async _openCoverageReport(): Promise<void> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            vscode.window.showErrorMessage('No workspace folder found');
+            return;
+        }
+
+        try {
+            const jacocoRunner = new JacocoRunner(workspaceFolder);
+            const opened = await jacocoRunner.openHtmlReport();
+
+            if (!opened) {
+                vscode.window.showWarningMessage('Coverage report not found. Run tests with coverage first.');
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage('Failed to open coverage report');
+        }
+    }
+
+    /**
+     * Improves test coverage by generating additional test cases
+     */
+    private async _improveCoverage(
+        sourceFilePath: string,
+        testFilePath: string | null,
+        selectedMethods: string[],
+        currentCoverage: JacocoCoverageResult,
+        targetCoverage: number
+    ): Promise<void> {
+        if (!sourceFilePath) {
+            this._view?.webview.postMessage({
+                command: 'improveCoverageError',
+                error: 'Source file path is required'
+            });
+            return;
+        }
+
+        this._view?.webview.postMessage({ command: 'improveCoverageStarted' });
+
+        try {
+            // Read source file
+            const sourceUri = vscode.Uri.file(sourceFilePath);
+            const sourceContentBuffer = await vscode.workspace.fs.readFile(sourceUri);
+            const sourceContent = new TextDecoder().decode(sourceContentBuffer);
+
+            // Derive test file path if not provided
+            let resolvedTestFilePath = testFilePath;
+            if (!resolvedTestFilePath) {
+                const pathResolver = new PathResolver();
+                const testUri = pathResolver.resolveTestPath(sourceUri);
+                resolvedTestFilePath = testUri.fsPath;
+            }
+
+            // Read existing test file
+            const testUri = vscode.Uri.file(resolvedTestFilePath);
+            const testContentBuffer = await vscode.workspace.fs.readFile(testUri);
+            const testContent = new TextDecoder().decode(testContentBuffer);
+
+            // Get cached AST if available
+            const cachedAst = await this._astCacheManager.getCachedAst(sourceFilePath);
+
+            // Call API to improve coverage
+            const response = await this._apiClient.improveCoverage({
+                sourceFile: sourceContent,
+                testFile: testContent,
+                selectedMethods,
+                cachedAst: cachedAst?.ast,
+                currentCoverage,
+                targetCoverage
+            });
+
+            if (response.success) {
+                this._view?.webview.postMessage({
+                    command: 'improveCoverageResult',
+                    improvedTestCode: response.improvedTestCode,
+                    additions: response.additions,
+                    expectedCoverageIncrease: response.expectedCoverageIncrease,
+                    testFilePath: resolvedTestFilePath
+                });
+
+                vscode.window.showInformationMessage(
+                    `Coverage improvement suggestions generated. Expected increase: +${response.expectedCoverageIncrease?.toFixed(1) || '?'}%`
+                );
+            } else {
+                this._view?.webview.postMessage({
+                    command: 'improveCoverageError',
+                    error: 'Failed to generate coverage improvements'
+                });
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'improveCoverageError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`Coverage improvement failed: ${message}`);
+        }
+    }
+
+    /**
+     * Applies improved test code to the test file
+     */
+    private async _applyImprovement(testFilePath: string, testCode: string): Promise<void> {
+        if (!testFilePath || !testCode) {
+            this._view?.webview.postMessage({
+                command: 'applyImprovementError',
+                error: 'No improvement to apply'
+            });
+            return;
+        }
+
+        try {
+            const testUri = vscode.Uri.file(testFilePath);
+            const encoder = new TextEncoder();
+            await vscode.workspace.fs.writeFile(testUri, encoder.encode(testCode));
+
+            // Open the file in editor
+            const document = await vscode.workspace.openTextDocument(testUri);
+            await vscode.window.showTextDocument(document);
+
+            this._view?.webview.postMessage({
+                command: 'applyImprovementSuccess',
+                testFilePath
+            });
+
+            vscode.window.showInformationMessage('Improved test code applied. Re-run coverage to verify.');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'applyImprovementError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`Failed to apply improvement: ${message}`);
         }
     }
 
@@ -681,7 +1161,68 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <button class="selected-file-remove" id="btnRemoveFile" title="Remove">&#10005;</button>
         </div>
 
-        <!-- Method Selection (shown after file is selected) -->
+        <!-- AST Analysis Section (shown after file is selected) -->
+        <div id="astSection" class="hidden">
+            <div class="section-title">AST Analysis</div>
+
+            <!-- AST Status -->
+            <div class="ast-status" id="astStatus">
+                <span class="ast-status-icon" id="astStatusIcon">&#9888;</span>
+                <span class="ast-status-text" id="astStatusText">No cached analysis</span>
+            </div>
+
+            <!-- Cached AST Info Box -->
+            <div class="ast-info-box hidden" id="astInfoBox">
+                <div class="ast-info-row">
+                    <span class="ast-info-label">Methods:</span>
+                    <span class="ast-info-value" id="astMethodCount">-</span>
+                </div>
+                <div class="ast-info-row">
+                    <span class="ast-info-label">Dependencies:</span>
+                    <span class="ast-info-value" id="astDependencies">-</span>
+                </div>
+                <div class="ast-info-row">
+                    <span class="ast-info-label">Annotations:</span>
+                    <span class="ast-info-value" id="astAnnotations">-</span>
+                </div>
+                <div class="ast-info-row">
+                    <span class="ast-info-label">Complexity:</span>
+                    <span class="ast-info-value" id="astComplexity">-</span>
+                </div>
+                <div class="ast-info-row">
+                    <span class="ast-info-label">Analyzed:</span>
+                    <span class="ast-info-value" id="astAnalyzedAt">-</span>
+                </div>
+            </div>
+
+            <!-- AST Buttons: Analyze (when no cache) -->
+            <button class="btn btn-primary" id="btnAnalyzeAst">
+                <span class="icon">&#128269;</span>
+                <span id="analyzeAstText">Analyze AST</span>
+                <span class="spinner hidden" id="analyzeAstSpinner"></span>
+            </button>
+
+            <!-- AST Buttons: Use Cached / Re-analyze (when cache exists) -->
+            <div class="ast-cached-buttons hidden" id="astCachedButtons">
+                <button class="btn btn-success" id="btnUseCachedAst">
+                    <span class="icon">&#10004;</span>
+                    Use Cached
+                </button>
+                <button class="btn btn-secondary" id="btnReanalyzeAst">
+                    <span class="icon">&#8635;</span>
+                    Re-analyze
+                </button>
+            </div>
+
+            <!-- AST Selected Indicator -->
+            <div class="ast-selected hidden" id="astSelectedIndicator">
+                <span class="ast-selected-icon">&#9989;</span>
+                <span class="ast-selected-text">AST analysis ready</span>
+                <button class="ast-selected-change" id="btnChangeAst">Change</button>
+            </div>
+        </div>
+
+        <!-- Method Selection (shown after AST is ready) -->
         <div id="methodSelectionSection" class="hidden">
             <div class="method-selection-header">
                 <span class="section-title">Select Methods</span>
@@ -697,7 +1238,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </div>
         </div>
 
-        <!-- Step 1: Generate Scenarios -->
+        <!-- Step 1: Check Testability -->
+        <button class="btn btn-secondary" id="btnCheckTestability" disabled>
+            <span class="icon">&#9989;</span>
+            <span id="checkTestabilityText">Check Testability</span>
+            <span class="spinner hidden" id="testabilitySpinner"></span>
+        </button>
+
+        <!-- Testability Result Section -->
+        <div id="testabilitySection" class="hidden">
+            <div class="testability-result" id="testabilityResult">
+                <div class="testability-header" id="testabilityHeader">
+                    <span class="testability-icon" id="testabilityIcon">&#10004;</span>
+                    <span class="testability-text" id="testabilityText">Testable</span>
+                </div>
+                <!-- Refactoring Advice (shown if not testable) -->
+                <div class="refactoring-section hidden" id="refactoringSection">
+                    <div class="refactoring-header">Refactoring Suggestions</div>
+                    <div class="refactoring-list" id="refactoringList"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: Generate Scenarios -->
         <button class="btn btn-primary" id="btnGenerateScenarios" disabled>
             <span class="icon">&#8801;</span>
             <span id="generateScenariosText">Generate Scenarios</span>
@@ -759,6 +1322,88 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         </div>
     </div>
 
+    <div class="divider"></div>
+
+    <!-- Coverage Analysis Section -->
+    <div class="section">
+        <div class="section-title">Coverage Analysis</div>
+
+        <!-- Coverage Target Display -->
+        <div class="coverage-target-info">
+            <span>Target Coverage:</span>
+            <span id="coverageTargetValue">80%</span>
+        </div>
+
+        <button class="btn btn-primary" id="btnRunWithCoverage">
+            <span class="icon">&#128202;</span>
+            <span id="runWithCoverageText">Run with Coverage</span>
+            <span class="spinner hidden" id="coverageSpinner"></span>
+        </button>
+
+        <button class="btn btn-secondary" id="btnOpenCoverageReport">
+            <span class="icon">&#128196;</span>
+            Open Report
+        </button>
+
+        <!-- Coverage Result -->
+        <div id="coverageResultSection" class="hidden">
+            <div class="coverage-result" id="coverageResult">
+                <div class="coverage-header" id="coverageHeader">
+                    <span class="coverage-percentage" id="coveragePercentage">0%</span>
+                    <span class="coverage-status" id="coverageStatus">Below Target</span>
+                </div>
+                <div class="coverage-bars">
+                    <div class="coverage-bar-item">
+                        <span class="coverage-bar-label">Line</span>
+                        <div class="coverage-bar">
+                            <div class="coverage-bar-fill" id="lineCoverageBar"></div>
+                        </div>
+                        <span class="coverage-bar-value" id="lineCoverageValue">0%</span>
+                    </div>
+                    <div class="coverage-bar-item">
+                        <span class="coverage-bar-label">Branch</span>
+                        <div class="coverage-bar">
+                            <div class="coverage-bar-fill" id="branchCoverageBar"></div>
+                        </div>
+                        <span class="coverage-bar-value" id="branchCoverageValue">0%</span>
+                    </div>
+                </div>
+                <!-- Method Coverage Details -->
+                <div class="method-coverage-section hidden" id="methodCoverageSection">
+                    <div class="method-coverage-header">Method Coverage</div>
+                    <div class="method-coverage-list" id="methodCoverageList"></div>
+                </div>
+            </div>
+
+            <!-- Improve Coverage Button (shown when below target) -->
+            <button class="btn btn-warning hidden" id="btnImproveCoverage">
+                <span class="icon">&#8679;</span>
+                Improve Coverage
+            </button>
+
+            <!-- Coverage Improvement Result -->
+            <div class="improvement-result hidden" id="improvementResultSection">
+                <div class="improvement-header">
+                    <span class="improvement-title">Coverage Improvement Suggested</span>
+                    <span class="improvement-increase" id="improvementIncrease">+0%</span>
+                </div>
+                <div class="improvement-additions" id="improvementAdditions">
+                    <!-- List of suggested additions -->
+                </div>
+                <div class="improvement-actions">
+                    <button class="btn btn-primary" id="btnApplyImprovement">
+                        <span class="icon">&#10004;</span>
+                        Apply Changes
+                    </button>
+                    <button class="btn btn-secondary" id="btnRerunCoverage">
+                        <span class="icon">&#8635;</span>
+                        Re-run Coverage
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Message Area -->
     <div id="messageArea" class="hidden"></div>
 
@@ -797,11 +1442,43 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const btnRegenerateScenarios = document.getElementById('btnRegenerateScenarios');
         const btnGenerateSelected = document.getElementById('btnGenerateSelected');
 
+        // AST Analysis elements
+        const astSection = document.getElementById('astSection');
+        const astStatus = document.getElementById('astStatus');
+        const astStatusIcon = document.getElementById('astStatusIcon');
+        const astStatusText = document.getElementById('astStatusText');
+        const astInfoBox = document.getElementById('astInfoBox');
+        const astMethodCount = document.getElementById('astMethodCount');
+        const astDependencies = document.getElementById('astDependencies');
+        const astAnnotations = document.getElementById('astAnnotations');
+        const astComplexity = document.getElementById('astComplexity');
+        const astAnalyzedAt = document.getElementById('astAnalyzedAt');
+        const btnAnalyzeAst = document.getElementById('btnAnalyzeAst');
+        const analyzeAstText = document.getElementById('analyzeAstText');
+        const analyzeAstSpinner = document.getElementById('analyzeAstSpinner');
+        const astCachedButtons = document.getElementById('astCachedButtons');
+        const btnUseCachedAst = document.getElementById('btnUseCachedAst');
+        const btnReanalyzeAst = document.getElementById('btnReanalyzeAst');
+        const astSelectedIndicator = document.getElementById('astSelectedIndicator');
+        const btnChangeAst = document.getElementById('btnChangeAst');
+
         // Method selection elements
         const methodSelectionSection = document.getElementById('methodSelectionSection');
         const methodList = document.getElementById('methodList');
         const btnSelectAll = document.getElementById('btnSelectAll');
         const btnDeselectAll = document.getElementById('btnDeselectAll');
+
+        // Testability check elements
+        const btnCheckTestability = document.getElementById('btnCheckTestability');
+        const checkTestabilityText = document.getElementById('checkTestabilityText');
+        const testabilitySpinner = document.getElementById('testabilitySpinner');
+        const testabilitySection = document.getElementById('testabilitySection');
+        const testabilityResult = document.getElementById('testabilityResult');
+        const testabilityHeader = document.getElementById('testabilityHeader');
+        const testabilityIcon = document.getElementById('testabilityIcon');
+        const testabilityText = document.getElementById('testabilityText');
+        const refactoringSection = document.getElementById('refactoringSection');
+        const refactoringList = document.getElementById('refactoringList');
 
         // Test execution elements
         const testClassNameInput = document.getElementById('testClassName');
@@ -812,13 +1489,47 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const testResultArea = document.getElementById('testResultArea');
         const testResult = document.getElementById('testResult');
 
+        // Coverage elements
+        const coverageTargetValue = document.getElementById('coverageTargetValue');
+        const btnRunWithCoverage = document.getElementById('btnRunWithCoverage');
+        const runWithCoverageText = document.getElementById('runWithCoverageText');
+        const coverageSpinner = document.getElementById('coverageSpinner');
+        const btnOpenCoverageReport = document.getElementById('btnOpenCoverageReport');
+        const coverageResultSection = document.getElementById('coverageResultSection');
+        const coverageResult = document.getElementById('coverageResult');
+        const coverageHeader = document.getElementById('coverageHeader');
+        const coveragePercentage = document.getElementById('coveragePercentage');
+        const coverageStatus = document.getElementById('coverageStatus');
+        const lineCoverageBar = document.getElementById('lineCoverageBar');
+        const lineCoverageValue = document.getElementById('lineCoverageValue');
+        const branchCoverageBar = document.getElementById('branchCoverageBar');
+        const branchCoverageValue = document.getElementById('branchCoverageValue');
+        const methodCoverageSection = document.getElementById('methodCoverageSection');
+        const methodCoverageList = document.getElementById('methodCoverageList');
+        const btnImproveCoverage = document.getElementById('btnImproveCoverage');
+        const improvementResultSection = document.getElementById('improvementResultSection');
+        const improvementIncrease = document.getElementById('improvementIncrease');
+        const improvementAdditions = document.getElementById('improvementAdditions');
+        const btnApplyImprovement = document.getElementById('btnApplyImprovement');
+        const btnRerunCoverage = document.getElementById('btnRerunCoverage');
+
         // State
         let currentFilePath = null;
         let currentTestClassName = null;
+        let currentTestFilePath = null;
         let scenariosApproved = false;
         let currentScenarios = '';
         let availableMethods = [];
         let selectedMethods = [];
+        let cachedAstData = null;
+        let selectedAstData = null;
+        let isAstReady = false;
+        let isTestabilityChecked = false;
+        let isTestable = false;
+        let currentCoverage = null;
+        let targetCoverage = 80;
+        let improvedTestCode = null;
+        let improvedTestFilePath = null;
 
         // Request initial settings
         vscode.postMessage({ command: 'getSettings' });
@@ -858,10 +1569,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             selectedMethods = [];
             selectedFile.classList.add('hidden');
             fileSelectionOptions.classList.remove('hidden');
+            astSection.classList.add('hidden');
             methodSelectionSection.classList.add('hidden');
+            testabilitySection.classList.add('hidden');
             scenarioSection.classList.add('hidden');
+            btnCheckTestability.disabled = true;
             btnGenerateScenarios.disabled = true;
             btnGenerateSelected.disabled = true;
+            // Reset AST and testability state
+            resetAstState();
+            resetTestabilityState();
         });
 
         // Method selection helpers
@@ -898,8 +1615,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 }
             });
 
-            // Enable/disable generate scenarios based on selection
-            btnGenerateScenarios.disabled = selectedMethods.length === 0;
+            // Enable/disable check testability based on selection
+            btnCheckTestability.disabled = selectedMethods.length === 0;
+
+            // Reset testability state when methods change
+            if (isTestabilityChecked) {
+                isTestabilityChecked = false;
+                isTestable = false;
+                testabilitySection.classList.add('hidden');
+                btnGenerateScenarios.disabled = true;
+            }
         }
 
         // Select all methods
@@ -919,6 +1644,144 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             });
             updateSelectedMethods();
         });
+
+        // AST Analysis: Analyze button (when no cache)
+        btnAnalyzeAst.addEventListener('click', () => {
+            if (currentFilePath) {
+                vscode.postMessage({
+                    command: 'analyzeAst',
+                    filePath: currentFilePath
+                });
+            }
+        });
+
+        // AST Analysis: Use Cached button
+        btnUseCachedAst.addEventListener('click', () => {
+            if (currentFilePath && cachedAstData) {
+                selectedAstData = cachedAstData;
+                isAstReady = true;
+                showAstSelectedState();
+                enableMethodSelection();
+            }
+        });
+
+        // AST Analysis: Re-analyze button
+        btnReanalyzeAst.addEventListener('click', () => {
+            if (currentFilePath) {
+                vscode.postMessage({
+                    command: 'reanalyzeAst',
+                    filePath: currentFilePath
+                });
+            }
+        });
+
+        // AST Analysis: Change button (go back to AST selection)
+        btnChangeAst.addEventListener('click', () => {
+            isAstReady = false;
+            selectedAstData = null;
+            astSelectedIndicator.classList.add('hidden');
+            methodSelectionSection.classList.add('hidden');
+            btnGenerateScenarios.disabled = true;
+
+            // Show AST buttons again
+            if (cachedAstData) {
+                astCachedButtons.classList.remove('hidden');
+            } else {
+                btnAnalyzeAst.classList.remove('hidden');
+            }
+        });
+
+        // Helper: Show AST info in the info box
+        function showAstInfo(astData) {
+            if (!astData || !astData.ast) return;
+
+            const ast = astData.ast;
+            astMethodCount.textContent = ast.methodCount + ' (public: ' + ast.publicMethods.length + ')';
+            astDependencies.textContent = ast.dependencies.length > 0 ? ast.dependencies.slice(0, 3).join(', ') + (ast.dependencies.length > 3 ? '...' : '') : '-';
+            astAnnotations.textContent = ast.annotations.length > 0 ? ast.annotations.join(', ') : '-';
+            astComplexity.textContent = 'CC: ' + ast.complexity.cyclomaticComplexity + ', LOC: ' + ast.complexity.linesOfCode;
+
+            // Format date
+            const analyzedDate = new Date(astData.analyzedAt);
+            astAnalyzedAt.textContent = analyzedDate.toLocaleString();
+
+            astInfoBox.classList.remove('hidden');
+        }
+
+        // Helper: Show AST selected state
+        function showAstSelectedState() {
+            astStatus.classList.add('hidden');
+            astInfoBox.classList.add('hidden');
+            btnAnalyzeAst.classList.add('hidden');
+            astCachedButtons.classList.add('hidden');
+            astSelectedIndicator.classList.remove('hidden');
+        }
+
+        // Helper: Enable method selection section
+        function enableMethodSelection() {
+            methodSelectionSection.classList.remove('hidden');
+            // Request method extraction
+            vscode.postMessage({
+                command: 'extractMethods',
+                filePath: currentFilePath
+            });
+        }
+
+        // Helper: Reset AST state
+        function resetAstState() {
+            cachedAstData = null;
+            selectedAstData = null;
+            isAstReady = false;
+            astStatus.classList.remove('hidden');
+            astStatusIcon.innerHTML = '&#9888;';
+            astStatusText.textContent = 'No cached analysis';
+            astInfoBox.classList.add('hidden');
+            btnAnalyzeAst.classList.remove('hidden');
+            astCachedButtons.classList.add('hidden');
+            astSelectedIndicator.classList.add('hidden');
+        }
+
+        // Helper: Reset testability state
+        function resetTestabilityState() {
+            isTestabilityChecked = false;
+            isTestable = false;
+            testabilitySection.classList.add('hidden');
+            btnCheckTestability.disabled = true;
+            btnGenerateScenarios.disabled = true;
+        }
+
+        // Check Testability button
+        btnCheckTestability.addEventListener('click', () => {
+            if (currentFilePath && selectedMethods.length > 0) {
+                vscode.postMessage({
+                    command: 'checkTestability',
+                    filePath: currentFilePath,
+                    selectedMethods: selectedMethods
+                });
+            }
+        });
+
+        // Helper: Render refactoring advice
+        function renderRefactoringAdvice(advice) {
+            if (!advice || advice.length === 0) {
+                refactoringSection.classList.add('hidden');
+                return;
+            }
+
+            refactoringSection.classList.remove('hidden');
+            refactoringList.innerHTML = advice.map(item => {
+                const severityClass = item.severity === 'error' ? 'error' : (item.severity === 'warning' ? 'warning' : 'info');
+                const severityIcon = item.severity === 'error' ? '&#10060;' : (item.severity === 'warning' ? '&#9888;' : '&#8505;');
+                return '<div class="refactoring-item ' + severityClass + '">' +
+                    '<div class="refactoring-item-header">' +
+                    '<span class="refactoring-severity">' + severityIcon + '</span>' +
+                    '<span class="refactoring-method">' + escapeHtml(item.method) + '</span>' +
+                    '</div>' +
+                    '<div class="refactoring-issue">' + escapeHtml(item.issue) + '</div>' +
+                    '<div class="refactoring-suggestion">' + escapeHtml(item.suggestion) + '</div>' +
+                    '</div>';
+            }).join('');
+        }
 
         // Generate scenarios for selected file
         btnGenerateScenarios.addEventListener('click', () => {
@@ -1001,6 +1864,144 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             });
         });
 
+        // Run with coverage
+        btnRunWithCoverage.addEventListener('click', () => {
+            const testClassName = testClassNameInput.value.trim();
+            if (!testClassName) {
+                showMessage('warning', 'Please enter a test class name');
+                return;
+            }
+            vscode.postMessage({
+                command: 'runTestWithCoverage',
+                testClassName: testClassName
+            });
+        });
+
+        // Open coverage report
+        btnOpenCoverageReport.addEventListener('click', () => {
+            vscode.postMessage({ command: 'openCoverageReport' });
+        });
+
+        // Improve coverage
+        btnImproveCoverage.addEventListener('click', () => {
+            if (currentFilePath && currentCoverage && currentTestFilePath) {
+                vscode.postMessage({
+                    command: 'improveCoverage',
+                    sourceFilePath: currentFilePath,
+                    testFilePath: currentTestFilePath,
+                    selectedMethods: selectedMethods,
+                    currentCoverage: currentCoverage,
+                    targetCoverage: targetCoverage
+                });
+            } else {
+                showMessage('warning', 'Please run tests with coverage first.');
+            }
+        });
+
+        // Apply coverage improvement
+        btnApplyImprovement.addEventListener('click', () => {
+            if (improvedTestCode && improvedTestFilePath) {
+                btnApplyImprovement.disabled = true;
+                btnApplyImprovement.textContent = 'Applying...';
+                vscode.postMessage({
+                    command: 'applyImprovement',
+                    testFilePath: improvedTestFilePath,
+                    testCode: improvedTestCode
+                });
+            }
+        });
+
+        // Re-run coverage after applying improvement
+        btnRerunCoverage.addEventListener('click', () => {
+            improvementResultSection.classList.add('hidden');
+            const testClassName = testClassNameInput.value.trim();
+            if (testClassName) {
+                vscode.postMessage({
+                    command: 'runTestWithCoverage',
+                    testClassName: testClassName
+                });
+            }
+        });
+
+        // Helper: Show improvement result
+        function showImprovementResult(additions, expectedIncrease) {
+            improvementResultSection.classList.remove('hidden');
+            improvementIncrease.textContent = '+' + (expectedIncrease || 0).toFixed(1) + '%';
+
+            // Render additions list
+            if (additions && additions.length > 0) {
+                improvementAdditions.innerHTML = additions.map(function(addition) {
+                    return '<div class="improvement-addition-item">' +
+                        '<span class="addition-method">' + escapeHtml(addition.methodName || 'Test method') + '</span>' +
+                        '<span class="addition-description">' + escapeHtml(addition.description || '') + '</span>' +
+                        '</div>';
+                }).join('');
+            } else {
+                improvementAdditions.innerHTML = '<div class="improvement-addition-item">Additional test cases generated</div>';
+            }
+        }
+
+        // Helper: Render coverage result
+        function renderCoverageResult(coverage, meetsTarget, target) {
+            coverageResultSection.classList.remove('hidden');
+
+            // Overall percentage
+            coveragePercentage.textContent = coverage.overallCoverage.toFixed(1) + '%';
+
+            // Status
+            if (meetsTarget) {
+                coverageStatus.textContent = 'Target Met';
+                coverageStatus.className = 'coverage-status success';
+                coverageHeader.className = 'coverage-header success';
+                btnImproveCoverage.classList.add('hidden');
+            } else {
+                coverageStatus.textContent = 'Below Target (' + target + '%)';
+                coverageStatus.className = 'coverage-status failure';
+                coverageHeader.className = 'coverage-header failure';
+                btnImproveCoverage.classList.remove('hidden');
+            }
+
+            // Line coverage bar
+            lineCoverageBar.style.width = coverage.lineCoverage + '%';
+            lineCoverageBar.className = 'coverage-bar-fill ' + getCoverageClass(coverage.lineCoverage, target);
+            lineCoverageValue.textContent = coverage.lineCoverage.toFixed(1) + '%';
+
+            // Branch coverage bar
+            branchCoverageBar.style.width = coverage.branchCoverage + '%';
+            branchCoverageBar.className = 'coverage-bar-fill ' + getCoverageClass(coverage.branchCoverage, target);
+            branchCoverageValue.textContent = coverage.branchCoverage.toFixed(1) + '%';
+
+            // Method coverage
+            if (coverage.methodCoverage && Object.keys(coverage.methodCoverage).length > 0) {
+                methodCoverageSection.classList.remove('hidden');
+                renderMethodCoverage(coverage.methodCoverage, target);
+            } else {
+                methodCoverageSection.classList.add('hidden');
+            }
+        }
+
+        // Helper: Get coverage class based on percentage
+        function getCoverageClass(percentage, target) {
+            if (percentage >= target) return 'high';
+            if (percentage >= target * 0.7) return 'medium';
+            return 'low';
+        }
+
+        // Helper: Render method coverage list
+        function renderMethodCoverage(methodCoverage, target) {
+            const methods = Object.entries(methodCoverage);
+            methodCoverageList.innerHTML = methods.map(function(entry) {
+                const methodName = entry[0];
+                const data = entry[1];
+                const avgCoverage = (data.lineCoverage + data.branchCoverage) / 2;
+                const coverageClass = getCoverageClass(avgCoverage, target);
+                return '<div class="method-coverage-item ' + coverageClass + '">' +
+                    '<span class="method-name">' + escapeHtml(methodName) + '</span>' +
+                    '<span class="method-coverage-value">' + avgCoverage.toFixed(0) + '%</span>' +
+                    '</div>';
+            }).join('');
+        }
+
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
@@ -1068,15 +2069,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     scenarioStatus.className = 'scenario-status draft';
                     btnApproveScenarios.disabled = false;
 
-                    // Show method selection and request methods
-                    methodSelectionSection.classList.remove('hidden');
-                    methodList.innerHTML = '<div class="method-loading"><span class="spinner"></span> Loading methods...</div>';
+                    // Reset AST state and show AST section
+                    resetAstState();
+                    astSection.classList.remove('hidden');
+                    methodSelectionSection.classList.add('hidden');
                     btnGenerateScenarios.disabled = true;
                     btnGenerateSelected.disabled = true;
 
-                    // Request method extraction
+                    // Request AST cache check (instead of directly extracting methods)
                     vscode.postMessage({
-                        command: 'extractMethods',
+                        command: 'checkAstCache',
                         filePath: message.filePath
                     });
 
@@ -1092,6 +2094,118 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     } else {
                         showMessage('warning', 'No public methods found in this file.');
                     }
+                    break;
+
+                case 'astCacheChecked':
+                    cachedAstData = message.astData;
+                    if (message.hasCachedAst) {
+                        // Show cached AST info
+                        showAstInfo(message.astData);
+
+                        if (message.isFileModified) {
+                            // File has been modified since last analysis
+                            astStatusIcon.innerHTML = '&#9888;';
+                            astStatusText.textContent = 'File modified since last analysis';
+                            astStatus.classList.remove('hidden');
+                        } else {
+                            // Cache is valid
+                            astStatusIcon.innerHTML = '&#10004;';
+                            astStatusText.textContent = 'Cached analysis available';
+                            astStatus.classList.remove('hidden');
+                        }
+
+                        // Show Use Cached / Re-analyze buttons
+                        btnAnalyzeAst.classList.add('hidden');
+                        astCachedButtons.classList.remove('hidden');
+                    } else {
+                        // No cache - show Analyze button
+                        astStatusIcon.innerHTML = '&#9888;';
+                        astStatusText.textContent = 'No cached analysis';
+                        astStatus.classList.remove('hidden');
+                        astInfoBox.classList.add('hidden');
+                        btnAnalyzeAst.classList.remove('hidden');
+                        astCachedButtons.classList.add('hidden');
+                    }
+                    break;
+
+                case 'astAnalyzing':
+                    analyzeAstText.textContent = 'Analyzing...';
+                    analyzeAstSpinner.classList.remove('hidden');
+                    btnAnalyzeAst.disabled = true;
+                    btnReanalyzeAst.disabled = true;
+                    break;
+
+                case 'astAnalyzed':
+                    analyzeAstText.textContent = 'Analyze AST';
+                    analyzeAstSpinner.classList.add('hidden');
+                    btnAnalyzeAst.disabled = false;
+                    btnReanalyzeAst.disabled = false;
+
+                    cachedAstData = message.astData;
+                    selectedAstData = message.astData;
+                    isAstReady = true;
+
+                    // Show AST info and selected state
+                    showAstInfo(message.astData);
+                    showAstSelectedState();
+                    enableMethodSelection();
+
+                    showMessage('success', 'AST analysis completed and cached.');
+                    break;
+
+                case 'astAnalyzeError':
+                    analyzeAstText.textContent = 'Analyze AST';
+                    analyzeAstSpinner.classList.add('hidden');
+                    btnAnalyzeAst.disabled = false;
+                    btnReanalyzeAst.disabled = false;
+                    // Error is shown as VS Code notification
+                    break;
+
+                case 'astSelected':
+                    selectedAstData = message.astData;
+                    isAstReady = true;
+                    showAstSelectedState();
+                    enableMethodSelection();
+                    break;
+
+                case 'testabilityChecking':
+                    checkTestabilityText.textContent = 'Checking...';
+                    testabilitySpinner.classList.remove('hidden');
+                    btnCheckTestability.disabled = true;
+                    break;
+
+                case 'testabilityResult':
+                    checkTestabilityText.textContent = 'Check Testability';
+                    testabilitySpinner.classList.add('hidden');
+                    btnCheckTestability.disabled = false;
+
+                    isTestabilityChecked = true;
+                    isTestable = message.testable;
+
+                    testabilitySection.classList.remove('hidden');
+
+                    if (message.testable) {
+                        testabilityHeader.className = 'testability-header success';
+                        testabilityIcon.innerHTML = '&#10004;';
+                        testabilityText.textContent = 'Code is testable';
+                        refactoringSection.classList.add('hidden');
+                        btnGenerateScenarios.disabled = false;
+                        showMessage('success', 'Code is testable! Proceed to generate scenarios.');
+                    } else {
+                        testabilityHeader.className = 'testability-header failure';
+                        testabilityIcon.innerHTML = '&#10060;';
+                        testabilityText.textContent = 'Testability issues found';
+                        renderRefactoringAdvice(message.refactoringAdvice);
+                        btnGenerateScenarios.disabled = true;
+                        showMessage('warning', 'Please review the refactoring suggestions.');
+                    }
+                    break;
+
+                case 'testabilityError':
+                    checkTestabilityText.textContent = 'Check Testability';
+                    testabilitySpinner.classList.add('hidden');
+                    btnCheckTestability.disabled = false;
+                    // Error is shown as VS Code notification
                     break;
 
                 case 'scenarioGenerating':
@@ -1161,6 +2275,81 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     runTestSpinner.classList.add('hidden');
                     btnRunTest.disabled = false;
                     btnRunAllTests.disabled = false;
+                    break;
+
+                case 'coverageRunning':
+                    runWithCoverageText.textContent = 'Running...';
+                    coverageSpinner.classList.remove('hidden');
+                    btnRunWithCoverage.disabled = true;
+                    break;
+
+                case 'coverageResult':
+                    runWithCoverageText.textContent = 'Run with Coverage';
+                    coverageSpinner.classList.add('hidden');
+                    btnRunWithCoverage.disabled = false;
+
+                    currentCoverage = message.coverage;
+                    targetCoverage = message.targetCoverage;
+                    renderCoverageResult(message.coverage, message.meetsTarget, message.targetCoverage);
+
+                    if (message.meetsTarget) {
+                        showMessage('success', 'Coverage target met! ' + message.coverage.overallCoverage.toFixed(1) + '%');
+                    } else {
+                        showMessage('warning', 'Coverage below target. Click "Improve Coverage" to enhance.');
+                    }
+                    break;
+
+                case 'coverageError':
+                    runWithCoverageText.textContent = 'Run with Coverage';
+                    coverageSpinner.classList.add('hidden');
+                    btnRunWithCoverage.disabled = false;
+                    // Error is shown as VS Code notification
+                    break;
+
+                case 'jacocoConfigResult':
+                    if (!message.configured) {
+                        showMessage('warning', 'Jacoco not configured. Add Jacoco plugin to your build file.');
+                    }
+                    break;
+
+                case 'improveCoverageStarted':
+                    btnImproveCoverage.disabled = true;
+                    btnImproveCoverage.textContent = 'Improving...';
+                    break;
+
+                case 'improveCoverageResult':
+                    btnImproveCoverage.disabled = false;
+                    btnImproveCoverage.textContent = 'Improve Coverage';
+
+                    // Store the improved test code for applying
+                    improvedTestCode = message.improvedTestCode;
+                    improvedTestFilePath = message.testFilePath;
+
+                    // Show the improvement result section
+                    showImprovementResult(message.additions, message.expectedCoverageIncrease);
+                    break;
+
+                case 'improveCoverageError':
+                    btnImproveCoverage.disabled = false;
+                    btnImproveCoverage.textContent = 'Improve Coverage';
+                    showMessage('error', message.error);
+                    break;
+
+                case 'applyImprovementSuccess':
+                    btnApplyImprovement.disabled = false;
+                    btnApplyImprovement.textContent = 'Apply Changes';
+                    showMessage('success', 'Changes applied! Click "Re-run Coverage" to verify.');
+                    break;
+
+                case 'applyImprovementError':
+                    btnApplyImprovement.disabled = false;
+                    btnApplyImprovement.textContent = 'Apply Changes';
+                    showMessage('error', message.error);
+                    break;
+
+                case 'testFileSaved':
+                    // Update current test file path when test is generated
+                    currentTestFilePath = message.testFilePath;
                     break;
             }
         });

@@ -466,3 +466,461 @@ select:focus {
     color: var(--vscode-descriptionForeground);
     margin-top: 4px;
 }
+
+/* AST Analysis Section Styles */
+.ast-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background-color: var(--vscode-editor-background);
+    border-radius: 4px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.ast-status-icon {
+    font-size: 14px;
+}
+
+.ast-status-text {
+    color: var(--vscode-descriptionForeground);
+}
+
+.ast-info-box {
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 12px;
+}
+
+.ast-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 4px 0;
+    font-size: 11px;
+    border-bottom: 1px solid var(--vscode-input-border);
+}
+
+.ast-info-row:last-child {
+    border-bottom: none;
+}
+
+.ast-info-label {
+    color: var(--vscode-descriptionForeground);
+    flex-shrink: 0;
+    margin-right: 8px;
+}
+
+.ast-info-value {
+    color: var(--vscode-foreground);
+    text-align: right;
+    word-break: break-word;
+    max-width: 60%;
+}
+
+.ast-cached-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.ast-cached-buttons .btn {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.ast-selected {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background-color: rgba(76, 175, 80, 0.1);
+    border: 1px solid #4caf50;
+    border-radius: 4px;
+    margin-bottom: 12px;
+}
+
+.ast-selected-icon {
+    font-size: 16px;
+    color: #4caf50;
+}
+
+.ast-selected-text {
+    flex: 1;
+    font-size: 12px;
+    color: #4caf50;
+    font-weight: 500;
+}
+
+.ast-selected-change {
+    background: none;
+    border: 1px solid var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    padding: 4px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.ast-selected-change:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* File modified warning style */
+.ast-status.modified .ast-status-icon {
+    color: #ff9800;
+}
+
+.ast-status.modified .ast-status-text {
+    color: #ff9800;
+}
+
+/* Testability Section Styles */
+.testability-result {
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 12px;
+}
+
+.testability-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.testability-header.success {
+    color: #4caf50;
+}
+
+.testability-header.failure {
+    color: #f44336;
+}
+
+.testability-icon {
+    font-size: 16px;
+}
+
+.refactoring-section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--vscode-input-border);
+}
+
+.refactoring-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--vscode-sideBarSectionHeader-foreground);
+    margin-bottom: 8px;
+}
+
+.refactoring-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.refactoring-item {
+    background-color: var(--vscode-input-background);
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 8px;
+    border-left: 3px solid var(--vscode-input-border);
+}
+
+.refactoring-item.error {
+    border-left-color: #f44336;
+}
+
+.refactoring-item.warning {
+    border-left-color: #ff9800;
+}
+
+.refactoring-item.info {
+    border-left-color: #2196f3;
+}
+
+.refactoring-item-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.refactoring-severity {
+    font-size: 12px;
+}
+
+.refactoring-method {
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--vscode-foreground);
+}
+
+.refactoring-issue {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 4px;
+}
+
+.refactoring-suggestion {
+    font-size: 11px;
+    color: var(--vscode-textLink-foreground);
+    font-style: italic;
+}
+
+/* Coverage Section Styles */
+.coverage-target-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px;
+    background-color: var(--vscode-editor-background);
+    border-radius: 4px;
+    margin-bottom: 10px;
+    font-size: 12px;
+}
+
+.coverage-result {
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.coverage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--vscode-input-border);
+}
+
+.coverage-header.success {
+    border-bottom-color: #4caf50;
+}
+
+.coverage-header.failure {
+    border-bottom-color: #f44336;
+}
+
+.coverage-percentage {
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.coverage-header.success .coverage-percentage {
+    color: #4caf50;
+}
+
+.coverage-header.failure .coverage-percentage {
+    color: #f44336;
+}
+
+.coverage-status {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+}
+
+.coverage-status.success {
+    background-color: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+}
+
+.coverage-status.failure {
+    background-color: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+}
+
+.coverage-bars {
+    margin-bottom: 12px;
+}
+
+.coverage-bar-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.coverage-bar-label {
+    width: 50px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.coverage-bar {
+    flex: 1;
+    height: 8px;
+    background-color: var(--vscode-input-background);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.coverage-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.coverage-bar-fill.high {
+    background-color: #4caf50;
+}
+
+.coverage-bar-fill.medium {
+    background-color: #ff9800;
+}
+
+.coverage-bar-fill.low {
+    background-color: #f44336;
+}
+
+.coverage-bar-value {
+    width: 45px;
+    font-size: 11px;
+    text-align: right;
+}
+
+.method-coverage-section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--vscode-input-border);
+}
+
+.method-coverage-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--vscode-sideBarSectionHeader-foreground);
+    margin-bottom: 8px;
+}
+
+.method-coverage-list {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.method-coverage-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 6px;
+    border-radius: 3px;
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+
+.method-coverage-item.high {
+    background-color: rgba(76, 175, 80, 0.1);
+}
+
+.method-coverage-item.medium {
+    background-color: rgba(255, 152, 0, 0.1);
+}
+
+.method-coverage-item.low {
+    background-color: rgba(244, 67, 54, 0.1);
+}
+
+.method-name {
+    font-family: monospace;
+    color: var(--vscode-foreground);
+}
+
+.method-coverage-value {
+    font-weight: 500;
+}
+
+.method-coverage-item.high .method-coverage-value {
+    color: #4caf50;
+}
+
+.method-coverage-item.medium .method-coverage-value {
+    color: #ff9800;
+}
+
+.method-coverage-item.low .method-coverage-value {
+    color: #f44336;
+}
+
+.btn-warning {
+    background-color: #ff9800;
+    color: white;
+}
+
+.btn-warning:hover {
+    background-color: #f57c00;
+}
+
+/* Coverage Improvement Result */
+.improvement-result {
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    padding: 12px;
+    margin-top: 12px;
+}
+
+.improvement-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.improvement-title {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.improvement-increase {
+    color: #4caf50;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.improvement-additions {
+    margin-bottom: 12px;
+}
+
+.improvement-addition-item {
+    padding: 8px;
+    background-color: var(--vscode-textBlockQuote-background);
+    border-radius: 3px;
+    margin-bottom: 6px;
+    font-size: 12px;
+}
+
+.addition-method {
+    display: block;
+    font-weight: 500;
+    color: var(--vscode-textLink-foreground);
+    margin-bottom: 4px;
+}
+
+.addition-description {
+    display: block;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+}
+
+.improvement-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.improvement-actions .btn {
+    flex: 1;
+}

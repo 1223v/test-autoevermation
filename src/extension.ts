@@ -4,6 +4,7 @@ import { SettingsManager } from './config/settings';
 import { StatusBarManager } from './ui/statusBar';
 import { SidebarProvider } from './ui/sidebarProvider';
 import { registerCommands } from './commands';
+import { AstCacheManager } from './services/astCacheManager';
 
 // Extension output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -28,11 +29,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Initialize status bar
         const statusBar = new StatusBarManager(context);
 
+        // Initialize AST cache manager
+        const astCacheManager = new AstCacheManager(context.workspaceState);
+        outputChannel.appendLine('AST Cache Manager initialized');
+
         // Initialize sidebar
         const sidebarProvider = new SidebarProvider(
             context.extensionUri,
             apiClient,
-            settings
+            settings,
+            astCacheManager
         );
         context.subscriptions.push(
             vscode.window.registerWebviewViewProvider(

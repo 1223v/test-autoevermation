@@ -178,3 +178,100 @@ export enum ApiErrorCode {
     VALIDATION_FAILED = 'VALIDATION_FAILED',
     SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE'
 }
+
+/**
+ * Cached AST data for API requests
+ */
+export interface CachedAstData {
+    className: string;
+    packageName: string;
+    methodCount: number;
+    publicMethods: string[];
+    privateMethods: string[];
+    protectedMethods: string[];
+    dependencies: string[];
+    imports: string[];
+    annotations: string[];
+    injectedBeans: string[];
+    complexity: {
+        cyclomaticComplexity: number;
+        linesOfCode: number;
+        methodComplexities: Record<string, number>;
+    };
+}
+
+/**
+ * Request body for testability check API
+ */
+export interface TestabilityCheckRequest {
+    sourceFile: SourceFile;
+    cachedAst?: CachedAstData;
+    selectedMethods: string[];
+}
+
+/**
+ * Refactoring advice for untestable code
+ */
+export interface RefactoringAdvice {
+    method: string;
+    issue: string;
+    suggestion: string;
+    severity: 'error' | 'warning' | 'info';
+}
+
+/**
+ * Response from testability check API
+ */
+export interface TestabilityCheckResponse {
+    success: boolean;
+    testable: boolean;
+    reasons?: string[];
+    refactoringAdvice?: RefactoringAdvice[];
+}
+
+/**
+ * Jacoco coverage result for a class
+ */
+export interface JacocoCoverageResult {
+    className: string;
+    packageName: string;
+    lineCoverage: number;
+    branchCoverage: number;
+    methodCoverage: Record<string, {
+        lineCoverage: number;
+        branchCoverage: number;
+        missedLines: number[];
+    }>;
+    overallCoverage: number;
+}
+
+/**
+ * Request body for coverage improvement API
+ */
+export interface ImproveCoverageRequest {
+    sourceFile: SourceFile;
+    testFile: SourceFile;
+    selectedMethods: string[];
+    cachedAst?: CachedAstData;
+    currentCoverage: JacocoCoverageResult;
+    targetCoverage: number;
+}
+
+/**
+ * Coverage improvement addition info
+ */
+export interface CoverageAddition {
+    testMethod: string;
+    targetBranch: string;
+    description: string;
+}
+
+/**
+ * Response from coverage improvement API
+ */
+export interface ImproveCoverageResponse {
+    success: boolean;
+    improvedTestCode: string;
+    additions: CoverageAddition[];
+    expectedCoverageIncrease: number;
+}

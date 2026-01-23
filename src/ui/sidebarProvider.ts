@@ -69,7 +69,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     await this._selectFile();
                     break;
                 case 'generateTestForFile':
-                    await this._generateTestForFile(message.filePath, message.scenarios);
+                    await this._generateTestForFile(
+                        message.filePath, 
+                        message.scenarios, 
+                        message.selectedMethods,
+                        message.autoRunTest || false
+                    );
                     break;
                 case 'handleDroppedUri':
                     await this._handleDroppedUri(message.uri);
@@ -120,6 +125,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         message.selectedMethods,
                         message.currentCoverage,
                         message.targetCoverage
+                    );
+                    break;
+                case 'regenerateTestWithError':
+                    await this._regenerateTestWithError(
+                        message.filePath,
+                        message.testFilePath,
+                        message.errorMessage,
+                        message.testOutput,
+                        message.scenarios,
+                        message.selectedMethods,
+                        message.retryCount
                     );
                     break;
                 case 'applyImprovement':
@@ -242,14 +258,57 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    private async _generateTestForFile(filePath: string, scenarios?: string): Promise<void> {
+    private async _generateTestForFile(
+        filePath: string, 
+        scenarios?: string, 
+        selectedMethods?: string[],
+        autoRunTest: boolean = false
+    ): Promise<void> {
         if (!filePath) {
             vscode.window.showWarningMessage('No file selected');
             return;
         }
 
-        const uri = vscode.Uri.file(filePath);
-        await vscode.commands.executeCommand('javaTestGenerator.generateTest', uri, scenarios);
+        try {
+            const uri = vscode.Uri.file(filePath);
+            
+            // Generate test using command
+            await vscode.commands.executeCommand('javaTestGenerator.generateTest', uri, scenarios);
+            
+            // If autoRunTest is true, wait a bit for file to be saved, then auto-run test
+            if (autoRunTest) {
+                // Wait 1 second for file to be fully saved
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Extract test class name
+                const fileName = filePath.split(/[/\\]/).pop() || '';
+                const className = fileName.replace('.java', '');
+                const testClassName = `${className}Test`;
+                
+                // Notify UI that we're starting auto-test
+                this._view?.webview.postMessage({
+                    command: 'autoTestStarting',
+                    testClassName
+                });
+                
+                // Get the generated test file path
+                const pathResolver = new PathResolver();
+                const sourceUri = vscode.Uri.file(filePath);
+                const testUri = pathResolver.resolveTestPath(sourceUri);
+                
+                // Auto-run test with self-healing
+                await this._runTestAndHandleErrors(
+                    testUri.fsPath,
+                    filePath,
+                    scenarios || '',
+                    selectedMethods || [],
+                    0
+                );
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(`Test generation failed: ${message}`);
+        }
     }
 
     private async _handleDroppedUri(uriString: string): Promise<void> {
@@ -499,8 +558,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     /**
      * Runs tests with Jacoco coverage analysis
+     * If autoImprove is true, automatically improves coverage until target is met
      */
-    private async _runTestWithCoverage(testClassName: string): Promise<void> {
+    private async _runTestWithCoverage(
+        testClassName: string, 
+        sourceFilePath?: string,
+        testFilePath?: string,
+        selectedMethods?: string[],
+        autoImprove: boolean = false,
+        improvementIteration: number = 0
+    ): Promise<void> {
+        const maxImprovements = 5; // Maximum improvement iterations
+        
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) {
             this._view?.webview.postMessage({
@@ -519,7 +588,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        this._view?.webview.postMessage({ command: 'coverageRunning' });
+        const iterationMsg = improvementIteration > 0 
+            ? ` (Improvement ${improvementIteration}/${maxImprovements})`
+            : '';
+        
+        this._view?.webview.postMessage({ 
+            command: 'coverageRunning',
+            iteration: improvementIteration
+        });
 
         try {
             const jacocoRunner = new JacocoRunner(workspaceFolder);
@@ -546,17 +622,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     coverage: result.coverage,
                     meetsTarget,
                     targetCoverage,
-                    reportPath: result.reportPath
+                    reportPath: result.reportPath,
+                    iteration: improvementIteration
                 });
 
                 if (meetsTarget) {
                     vscode.window.showInformationMessage(
-                        `Coverage: ${result.coverage.overallCoverage.toFixed(1)}% (Target: ${targetCoverage}%) - Target met!`
+                        `Coverage: ${result.coverage.overallCoverage.toFixed(1)}% (Target: ${targetCoverage}%) - Target met!${iterationMsg}`
                     );
                 } else {
                     vscode.window.showWarningMessage(
-                        `Coverage: ${result.coverage.overallCoverage.toFixed(1)}% (Target: ${targetCoverage}%) - Below target`
+                        `Coverage: ${result.coverage.overallCoverage.toFixed(1)}% (Target: ${targetCoverage}%) - Below target${iterationMsg}`
                     );
+                    
+                    // Auto-improve if enabled and not exceeded max iterations
+                    if (autoImprove && improvementIteration < maxImprovements && sourceFilePath && testFilePath) {
+                        vscode.window.showInformationMessage(
+                            `Auto-improving coverage... (Attempt ${improvementIteration + 1}/${maxImprovements})`
+                        );
+                        
+                        // Call improve coverage
+                        await this._improveCoverageAndRerun(
+                            sourceFilePath,
+                            testFilePath,
+                            selectedMethods || [],
+                            result.coverage,
+                            targetCoverage,
+                            testClassName,
+                            improvementIteration + 1
+                        );
+                    }
                 }
             } else {
                 this._view?.webview.postMessage({
@@ -572,6 +667,52 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 error: message
             });
             vscode.window.showErrorMessage(`Coverage analysis failed: ${message}`);
+        }
+    }
+
+    /**
+     * Improves coverage and reruns coverage analysis
+     */
+    private async _improveCoverageAndRerun(
+        sourceFilePath: string,
+        testFilePath: string,
+        selectedMethods: string[],
+        currentCoverage: JacocoCoverageResult,
+        targetCoverage: number,
+        testClassName: string,
+        iteration: number
+    ): Promise<void> {
+        this._view?.webview.postMessage({ 
+            command: 'improvingCoverage',
+            iteration
+        });
+
+        try {
+            // Call improve coverage API
+            await this._improveCoverage(
+                sourceFilePath,
+                testFilePath,
+                selectedMethods,
+                currentCoverage,
+                targetCoverage
+            );
+
+            // Wait for user to apply changes or auto-apply
+            // For now, we'll assume auto-apply
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Re-run coverage
+            await this._runTestWithCoverage(
+                testClassName,
+                sourceFilePath,
+                testFilePath,
+                selectedMethods,
+                true, // Continue auto-improving
+                iteration
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            vscode.window.showErrorMessage(`Coverage improvement failed: ${message}`);
         }
     }
 
@@ -669,13 +810,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const testContentBuffer = await vscode.workspace.fs.readFile(testUri);
             const testContent = new TextDecoder().decode(testContentBuffer);
 
+            // Extract file names and package names
+            const sourceFileName = sourceFilePath.split(/[/\\]/).pop() || '';
+            const testFileName = resolvedTestFilePath.split(/[/\\]/).pop() || '';
+            
+            // Extract package names from source content
+            const sourcePackageMatch = sourceContent.match(/^\s*package\s+([\w.]+)\s*;/m);
+            const sourcePackageName = sourcePackageMatch ? sourcePackageMatch[1] : '';
+            
+            const testPackageMatch = testContent.match(/^\s*package\s+([\w.]+)\s*;/m);
+            const testPackageName = testPackageMatch ? testPackageMatch[1] : '';
+
             // Get cached AST if available
             const cachedAst = await this._astCacheManager.getCachedAst(sourceFilePath);
 
             // Call API to improve coverage
             const response = await this._apiClient.improveCoverage({
-                sourceFile: sourceContent,
-                testFile: testContent,
+                sourceFile: {
+                    fileName: sourceFileName,
+                    packageName: sourcePackageName,
+                    content: sourceContent
+                },
+                testFile: {
+                    fileName: testFileName,
+                    packageName: testPackageName,
+                    content: testContent
+                },
                 selectedMethods,
                 cachedAst: cachedAst?.ast,
                 currentCoverage,
@@ -797,6 +957,221 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             // Show VS Code notification
             vscode.window.showErrorMessage(`Scenario generation failed: ${message}`);
         }
+    }
+
+    /**
+     * Regenerates test code after test execution failure with error context
+     */
+    private async _regenerateTestWithError(
+        sourceFilePath: string,
+        testFilePath: string,
+        errorMessage: string,
+        testOutput: string,
+        scenarios: string,
+        selectedMethods: string[],
+        retryCount: number
+    ): Promise<void> {
+        const maxRetries = 3;
+        
+        if (retryCount >= maxRetries) {
+            this._view?.webview.postMessage({
+                command: 'testRegenerationFailed',
+                error: `Max retries (${maxRetries}) reached. Please review the test manually.`,
+                testOutput
+            });
+            vscode.window.showErrorMessage(`Test generation failed after ${maxRetries} attempts. Please review manually.`);
+            return;
+        }
+
+        this._view?.webview.postMessage({ 
+            command: 'testRegenerating',
+            retryCount: retryCount + 1,
+            maxRetries
+        });
+
+        try {
+            const uri = vscode.Uri.file(sourceFilePath);
+            const contentBuffer = await vscode.workspace.fs.readFile(uri);
+            const content = new TextDecoder().decode(contentBuffer);
+            const fileName = sourceFilePath.split(/[/\\]/).pop() || '';
+
+            // Extract package name
+            const packageMatch = content.match(/^\s*package\s+([\w.]+)\s*;/m);
+            const packageName = packageMatch ? packageMatch[1] : '';
+
+            // Regenerate test with error context (included in scenarios as feedback)
+            const errorFeedback = `\n\n# Previous Test Execution Error (Attempt ${retryCount + 1}):\n${errorMessage}\n\nTest Output:\n${testOutput}\n\nPlease fix the test code to resolve this error.`;
+            
+            const response = await this._apiClient.generateTest({
+                sourceFile: {
+                    fileName,
+                    packageName,
+                    content
+                },
+                options: {
+                    testFramework: this._settings.getTestFramework(),
+                    mockingFramework: this._settings.getMockingFramework(),
+                    coverageTarget: this._settings.getCoverageTarget(),
+                    includeEdgeCases: this._settings.includeEdgeCases()
+                },
+                scenarios: scenarios + errorFeedback,
+                selectedMethods: selectedMethods
+            });
+
+            if (response.success) {
+                // Apply the new test code
+                const pathResolver = new PathResolver();
+                const sourceUri = vscode.Uri.file(sourceFilePath);
+                const testUri = testFilePath 
+                    ? vscode.Uri.file(testFilePath)
+                    : pathResolver.resolveTestPath(sourceUri, response.testFile.suggestedPath);
+
+                const encoder = new TextEncoder();
+                await vscode.workspace.fs.writeFile(testUri, encoder.encode(response.testFile.content));
+
+                this._view?.webview.postMessage({
+                    command: 'testRegenerated',
+                    testFilePath: testUri.fsPath,
+                    retryCount: retryCount + 1
+                });
+
+                // Auto-run the test again
+                await this._runTestAndHandleErrors(
+                    testUri.fsPath,
+                    sourceFilePath,
+                    scenarios,
+                    selectedMethods,
+                    retryCount + 1
+                );
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'testRegenerationError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`Test regeneration failed: ${message}`);
+        }
+    }
+
+    /**
+     * Runs test and handles errors with auto-regeneration
+     */
+    private async _runTestAndHandleErrors(
+        testFilePath: string,
+        sourceFilePath: string,
+        scenarios: string,
+        selectedMethods: string[],
+        retryCount: number = 0
+    ): Promise<void> {
+        this._view?.webview.postMessage({ command: 'testRunning' });
+
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder found');
+            }
+
+            // Extract test class name from file path
+            const testClassName = testFilePath.split(/[/\\]/).pop()?.replace('.java', '') || '';
+            
+            if (!this._validateTestClassName(testClassName)) {
+                throw new Error('Invalid test class name');
+            }
+
+            const buildTool = await this._detectBuildTool(workspaceFolder.uri);
+            let command: string;
+            let args: string[];
+
+            if (buildTool === 'gradle') {
+                command = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
+                args = ['test', '--tests', testClassName, '--info'];
+            } else if (buildTool === 'maven') {
+                command = 'mvn';
+                args = ['test', `-Dtest=${testClassName}`];
+            } else {
+                throw new Error('No Maven or Gradle build file found');
+            }
+
+            const result = await this._executeCommand(command, args, workspaceFolder.uri.fsPath);
+            const success = this._parseTestResult(result, buildTool);
+
+            if (success) {
+                this._view?.webview.postMessage({
+                    command: 'testSuccess',
+                    details: this._formatTestOutput(result)
+                });
+                vscode.window.showInformationMessage('All tests passed! Proceeding to coverage analysis...');
+                
+                // Auto-proceed to coverage analysis
+                await this._runTestWithCoverage(testClassName);
+            } else {
+                // Test failed - extract error and regenerate
+                const errorMessage = this._extractTestError(result);
+                
+                this._view?.webview.postMessage({
+                    command: 'testFailed',
+                    error: errorMessage,
+                    details: this._formatTestOutput(result),
+                    retryCount
+                });
+
+                vscode.window.showWarningMessage(
+                    `Tests failed (Attempt ${retryCount + 1}). Auto-regenerating...`
+                );
+
+                // Auto-regenerate with error context
+                await this._regenerateTestWithError(
+                    sourceFilePath,
+                    testFilePath,
+                    errorMessage,
+                    result,
+                    scenarios,
+                    selectedMethods,
+                    retryCount
+                );
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            this._view?.webview.postMessage({
+                command: 'testError',
+                error: message
+            });
+            vscode.window.showErrorMessage(`Test execution failed: ${message}`);
+        }
+    }
+
+    /**
+     * Extracts meaningful error message from test output
+     */
+    private _extractTestError(output: string): string {
+        const lines = output.split('\n');
+        const errorLines: string[] = [];
+        let inError = false;
+
+        for (const line of lines) {
+            const lowerLine = line.toLowerCase();
+            
+            // Start capturing at error indicators
+            if (lowerLine.includes('failed') || 
+                lowerLine.includes('error') || 
+                lowerLine.includes('exception') ||
+                lowerLine.includes('assertion')) {
+                inError = true;
+            }
+
+            if (inError) {
+                errorLines.push(line);
+                // Stop after reasonable context
+                if (errorLines.length > 20) {
+                    break;
+                }
+            }
+        }
+
+        return errorLines.length > 0 
+            ? errorLines.join('\n') 
+            : 'Test failed with unknown error. Check full output.';
     }
 
     /**
@@ -1151,6 +1526,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             </button>
         </div>
 
+
         <!-- Selected File Display -->
         <div class="selected-file hidden" id="selectedFile">
             <span class="selected-file-icon">&#9776;</span>
@@ -1328,10 +1704,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     <div class="section">
         <div class="section-title">Coverage Analysis</div>
 
-        <!-- Coverage Target Display -->
-        <div class="coverage-target-info">
-            <span>Target Coverage:</span>
-            <span id="coverageTargetValue">80%</span>
+        <!-- Coverage Target Setting -->
+        <div class="input-group">
+            <label for="coverageTarget">Target Coverage (%)</label>
+            <input type="number" id="coverageTarget" min="0" max="100" value="80" step="5">
         </div>
 
         <button class="btn btn-primary" id="btnRunWithCoverage">
@@ -1441,6 +1817,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const btnApproveScenarios = document.getElementById('btnApproveScenarios');
         const btnRegenerateScenarios = document.getElementById('btnRegenerateScenarios');
         const btnGenerateSelected = document.getElementById('btnGenerateSelected');
+
 
         // AST Analysis elements
         const astSection = document.getElementById('astSection');
@@ -1839,7 +2216,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 vscode.postMessage({
                     command: 'generateTestForFile',
                     filePath: currentFilePath,
-                    scenarios: scenarioEditor.value
+                    scenarios: scenarioEditor.value,
+                    selectedMethods: selectedMethods,
+                    autoRunTest: true  // 자동으로 테스트 실행
                 });
             }
         });
@@ -2350,6 +2729,54 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'testFileSaved':
                     // Update current test file path when test is generated
                     currentTestFilePath = message.testFilePath;
+                    break;
+
+                // Auto-Test handlers
+                case 'autoTestStarting':
+                    showMessage('info', 'Test generated! Auto-running tests...');
+                    break;
+
+                case 'testSuccess':
+                    testResultArea.classList.remove('hidden');
+                    testResult.className = 'test-result success';
+                    testResult.innerHTML = '<div class="result-header">&#10004; All Tests Passed!</div>' +
+                        '<pre class="result-details">' + escapeHtml(message.details) + '</pre>';
+                    showMessage('success', 'All tests passed!');
+                    break;
+
+                case 'testFailed':
+                    testResultArea.classList.remove('hidden');
+                    testResult.className = 'test-result failure';
+                    testResult.innerHTML = '<div class="result-header">&#10060; Tests Failed - Auto-Regenerating (Attempt ' + (message.retryCount + 1) + '/3)...</div>' +
+                        '<div class="result-error">' + escapeHtml(message.error) + '</div>' +
+                        '<pre class="result-details">' + escapeHtml(message.details) + '</pre>';
+                    showMessage('warning', 'Tests failed. Auto-regenerating...');
+                    break;
+
+                case 'testRegenerating':
+                    showMessage('info', 'Regenerating test code (Attempt ' + message.retryCount + '/' + message.maxRetries + ')...');
+                    break;
+
+                case 'testRegenerated':
+                    showMessage('success', 'Test code regenerated. Running tests again...');
+                    break;
+
+                case 'testRegenerationFailed':
+                    testResultArea.classList.remove('hidden');
+                    testResult.className = 'test-result failure';
+                    testResult.innerHTML = '<div class="result-header">&#10060; Max Retries Reached</div>' +
+                        '<div class="result-error">' + escapeHtml(message.error) + '</div>' +
+                        '<pre class="result-details">' + escapeHtml(message.testOutput || '') + '</pre>';
+                    showMessage('error', 'Test generation failed after 3 attempts. Please review manually.');
+                    break;
+
+                case 'testRegenerationError':
+                    showMessage('error', 'Test regeneration failed: ' + message.error);
+                    break;
+
+                // Auto Coverage Improvement handlers
+                case 'improvingCoverage':
+                    showMessage('info', 'Auto-improving coverage (Iteration ' + message.iteration + '/5)...');
                     break;
             }
         });

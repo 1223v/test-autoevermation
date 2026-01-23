@@ -110,7 +110,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     await this._checkTestability(message.filePath, message.selectedMethods);
                     break;
                 case 'runTestWithCoverage':
-                    await this._runTestWithCoverage(message.testClassName);
+                    await this._runTestWithCoverage(
+                        message.testClassName,
+                        message.sourceFilePath,
+                        message.testFilePath,
+                        message.selectedMethods,
+                        message.autoImprove || false,
+                        0,
+                        message.coverageTarget
+                    );
                     break;
                 case 'checkJacocoConfig':
                     await this._checkJacocoConfig();
@@ -566,7 +574,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         testFilePath?: string,
         selectedMethods?: string[],
         autoImprove: boolean = false,
-        improvementIteration: number = 0
+        improvementIteration: number = 0,
+        userCoverageTarget?: number
     ): Promise<void> {
         const maxImprovements = 5; // Maximum improvement iterations
         
@@ -600,21 +609,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         try {
             const jacocoRunner = new JacocoRunner(workspaceFolder);
 
-            // Check if Jacoco is configured
-            const isConfigured = await jacocoRunner.isJacocoConfigured();
-            if (!isConfigured) {
-                this._view?.webview.postMessage({
-                    command: 'coverageError',
-                    error: 'Jacoco is not configured in your project. Please add the Jacoco plugin to your build configuration.'
-                });
-                vscode.window.showWarningMessage('Jacoco is not configured. Please add Jacoco plugin to your build file.');
-                return;
-            }
+            // No need to check if Jacoco is configured!
+            // The extension will automatically inject Jacoco via command line if needed
+            console.log('[SidebarProvider] Running tests with coverage (auto-injection enabled)');
 
             const result = await jacocoRunner.runTestsWithCoverage(testClassName);
 
             if (result.success && result.coverage) {
-                const targetCoverage = this._settings.getCoverageTarget();
+                // Use user-defined coverage target or fallback to settings
+                const targetCoverage = userCoverageTarget ?? this._settings.getCoverageTarget();
                 const meetsTarget = result.coverage.overallCoverage >= targetCoverage;
 
                 this._view?.webview.postMessage({
@@ -1705,9 +1708,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <div class="section-title">Coverage Analysis</div>
 
         <!-- Coverage Target Setting -->
-        <div class="input-group">
-            <label for="coverageTarget">Target Coverage (%)</label>
-            <input type="number" id="coverageTarget" min="0" max="100" value="80" step="5">
+        <div class="coverage-target-container">
+            <label for="coverageTarget" class="coverage-label">
+                <span class="label-icon">🎯</span>
+                <span>Target Coverage</span>
+            </label>
+            <div class="coverage-input-wrapper">
+                <input 
+                    type="number" 
+                    id="coverageTarget" 
+                    class="coverage-input"
+                    min="0" 
+                    max="100" 
+                    value="80" 
+                    step="5"
+                    placeholder="80"
+                >
+                <span class="coverage-unit">%</span>
+            </div>
+            <div class="coverage-hint">
+                <span class="hint-icon">💡</span>
+                <span>커버리지 목표를 설정하세요 (0-100%)</span>
+            </div>
         </div>
 
         <button class="btn btn-primary" id="btnRunWithCoverage">
@@ -1867,7 +1889,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const testResult = document.getElementById('testResult');
 
         // Coverage elements
-        const coverageTargetValue = document.getElementById('coverageTargetValue');
+        const coverageTargetInput = document.getElementById('coverageTarget');
         const btnRunWithCoverage = document.getElementById('btnRunWithCoverage');
         const runWithCoverageText = document.getElementById('runWithCoverageText');
         const coverageSpinner = document.getElementById('coverageSpinner');
@@ -2250,9 +2272,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 showMessage('warning', 'Please enter a test class name');
                 return;
             }
+            
+            // Get user-defined coverage target
+            const userCoverageTarget = parseInt(coverageTargetInput.value) || 80;
+            targetCoverage = userCoverageTarget;
+            
             vscode.postMessage({
                 command: 'runTestWithCoverage',
-                testClassName: testClassName
+                testClassName: testClassName,
+                coverageTarget: userCoverageTarget,
+                sourceFilePath: currentFilePath,
+                testFilePath: currentTestFilePath,
+                selectedMethods: selectedMethods,
+                autoImprove: true  // 자동으로 목표 도달까지 개선
             });
         });
 

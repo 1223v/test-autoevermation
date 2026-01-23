@@ -100,29 +100,84 @@ export class JacocoRunner {
 
     /**
      * Executes tests with Jacoco coverage
+     * Uses command-line plugin invocation for maximum compatibility (no build file modification needed!)
      */
     private async executeTestsWithCoverage(buildTool: BuildTool, testClassName?: string): Promise<void> {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             let command: string;
             let args: string[];
 
             if (buildTool === 'gradle') {
+                // Gradle: Apply jacoco plugin via init script (no build.gradle modification needed!)
+                // Based on: https://stackoverflow.com/questions/54763222/
                 command = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
-                args = ['test', 'jacocoTestReport'];
+                
+                // Create temporary init script for Jacoco
+                // Java plugin is required for Jacoco to work
+                const initScriptContent = `
+allprojects {
+    apply plugin: 'java'
+    apply plugin: org.gradle.testing.jacoco.plugins.JacocoPlugin
+    
+    jacoco {
+        toolVersion = '0.8.14'
+    }
+    
+    // Ensure jacocoTestReport task exists and depends on test
+    tasks.withType(Test) {
+        finalizedBy jacocoTestReport
+    }
+    
+    jacocoTestReport {
+        dependsOn test
+        reports {
+            xml.required = true
+            html.required = true
+        }
+    }
+}
+`;
+                
+                // Write temporary init script
+                const initScriptPath = path.join(this.workspaceFolder.uri.fsPath, 'jacoco-temp-init.gradle');
+                try {
+                    const fs = await import('fs');
+                    await fs.promises.writeFile(initScriptPath, initScriptContent, 'utf8');
+                    console.log('[JacocoRunner] Created temporary init script:', initScriptPath);
+                } catch (error) {
+                    console.error('[JacocoRunner] Failed to create init script:', error);
+                    reject(new Error('Failed to create Jacoco init script'));
+                    return;
+                }
+                
+                args = ['--init-script', initScriptPath, 'test', 'jacocoTestReport'];
                 if (testClassName) {
                     args.push('--tests', testClassName);
                 }
+                
+                console.log('[JacocoRunner] Using init-script Jacoco invocation (no build.gradle modification needed)');
+                console.log('[JacocoRunner] Command:', command, args.join(' '));
             } else {
+                // Maven: Use direct plugin invocation (no pom.xml modification needed!)
+                // Based on: https://stackoverflow.com/questions/72277994/
                 command = 'mvn';
-                args = ['test', 'jacoco:report'];
+                args = [
+                    'clean',
+                    'org.jacoco:jacoco-maven-plugin:0.8.14:prepare-agent',
+                    'test',
+                    'org.jacoco:jacoco-maven-plugin:0.8.14:report'
+                ];
                 if (testClassName) {
                     args.push(`-Dtest=${testClassName}`);
                 }
+                
+                console.log('[JacocoRunner] Using command-line Jacoco invocation (no pom.xml modification needed)');
+                console.log('[JacocoRunner] Command:', command, args.join(' '));
             }
 
             const child = spawn(command, args, {
                 cwd: this.workspaceFolder.uri.fsPath,
-                shell: false,
+                shell: true,  // Windows에서 mvn, gradlew 실행을 위해 필요
                 env: { ...process.env },
                 windowsHide: true
             });
@@ -131,26 +186,55 @@ export class JacocoRunner {
             let stderr = '';
 
             child.stdout.on('data', (data: Buffer) => {
-                stdout += data.toString();
+                const output = data.toString();
+                stdout += output;
+                console.log('[JacocoRunner] STDOUT:', output);
             });
 
             child.stderr.on('data', (data: Buffer) => {
-                stderr += data.toString();
+                const output = data.toString();
+                stderr += output;
+                console.log('[JacocoRunner] STDERR:', output);
             });
 
             child.on('error', (error: Error) => {
                 reject(error);
             });
 
-            child.on('close', (code: number) => {
+            child.on('close', async (code: number) => {
+                console.log('[JacocoRunner] Command exit code:', code);
+                console.log('[JacocoRunner] Full stdout length:', stdout.length);
+                console.log('[JacocoRunner] Full stderr length:', stderr.length);
+                
+                // Cleanup temporary init script for Gradle
+                if (buildTool === 'gradle') {
+                    const initScriptPath = path.join(this.workspaceFolder.uri.fsPath, 'jacoco-temp-init.gradle');
+                    try {
+                        const fs = await import('fs');
+                        await fs.promises.unlink(initScriptPath);
+                        console.log('[JacocoRunner] Cleaned up temporary init script');
+                    } catch (error) {
+                        // Ignore cleanup errors
+                        console.log('[JacocoRunner] Note: Could not cleanup init script (may not exist)');
+                    }
+                }
+                
                 if (code === 0) {
+                    console.log('[JacocoRunner] ✅ Command succeeded');
                     resolve();
                 } else {
+                    console.log('[JacocoRunner] ⚠️ Command exited with non-zero code');
                     // Check if tests ran but some failed (still produces coverage)
-                    if (stdout.includes('BUILD') || stderr.includes('BUILD')) {
+                    if (stdout.includes('BUILD SUCCESSFUL') || stderr.includes('BUILD SUCCESSFUL')) {
+                        console.log('[JacocoRunner] Build successful despite non-zero exit');
                         resolve(); // Coverage report might still be generated
+                    } else if (stdout.includes('BUILD FAILED') || stderr.includes('BUILD FAILED')) {
+                        console.log('[JacocoRunner] ❌ Build failed');
+                        reject(new Error(`Build failed with code ${code}:\n${stderr || stdout}`));
                     } else {
-                        reject(new Error(`Command exited with code ${code}: ${stderr || stdout}`));
+                        // Try to resolve anyway - coverage might have been generated
+                        console.log('[JacocoRunner] Attempting to continue despite exit code');
+                        resolve();
                     }
                 }
             });
@@ -316,10 +400,16 @@ export class JacocoRunner {
     /**
      * Checks if Jacoco is configured in the project
      */
+    /**
+     * Checks if Jacoco is configured in build file
+     * NOTE: This is now optional! The extension can work WITHOUT Jacoco in pom.xml/build.gradle
+     * by using command-line plugin invocation.
+     */
     async isJacocoConfigured(): Promise<boolean> {
         const buildTool = await this.detectBuildTool();
 
         if (!buildTool) {
+            console.log('[JacocoRunner] No build tool detected');
             return false;
         }
 
@@ -335,10 +425,15 @@ export class JacocoRunner {
                 if (buildFiles.length > 0) {
                     const content = await vscode.workspace.fs.readFile(buildFiles[0]);
                     const text = new TextDecoder().decode(content);
-                    return text.includes('jacoco') || text.includes('JaCoCo');
+                    const lowerText = text.toLowerCase();
+                    const isConfigured = lowerText.includes('jacoco') || lowerText.includes('org.jacoco');
+                    console.log('[JacocoRunner] Gradle jacoco in build file:', isConfigured);
+                    return isConfigured;
+                } else {
+                    console.log('[JacocoRunner] No Gradle build file found');
                 }
             } else {
-                // Check pom.xml for jacoco plugin
+                // Check pom.xml for jacoco plugin (case-insensitive)
                 const pomFiles = await vscode.workspace.findFiles(
                     new vscode.RelativePattern(this.workspaceFolder.uri, 'pom.xml'),
                     null,
@@ -348,13 +443,30 @@ export class JacocoRunner {
                 if (pomFiles.length > 0) {
                     const content = await vscode.workspace.fs.readFile(pomFiles[0]);
                     const text = new TextDecoder().decode(content);
-                    return text.includes('jacoco');
+                    const lowerText = text.toLowerCase();
+                    
+                    // Check for jacoco-maven-plugin or org.jacoco
+                    const hasJacocoPlugin = lowerText.includes('jacoco-maven-plugin') || 
+                                          lowerText.includes('org.jacoco');
+                    
+                    console.log('[JacocoRunner] Maven pom.xml path:', pomFiles[0].fsPath);
+                    console.log('[JacocoRunner] Maven jacoco in build file:', hasJacocoPlugin);
+                    
+                    if (!hasJacocoPlugin) {
+                        console.log('[JacocoRunner] ⚠️ Jacoco NOT in pom.xml - will use command-line invocation instead!');
+                    }
+                    
+                    return hasJacocoPlugin;
+                } else {
+                    console.log('[JacocoRunner] No pom.xml found in workspace');
                 }
             }
         } catch (error) {
-            console.error('Failed to check Jacoco configuration:', error);
+            console.error('[JacocoRunner] Failed to check Jacoco configuration:', error);
         }
 
+        // Return false but it's OK - we'll use command-line invocation!
+        console.log('[JacocoRunner] ℹ️ No Jacoco config found, but extension will inject it via command line');
         return false;
     }
 

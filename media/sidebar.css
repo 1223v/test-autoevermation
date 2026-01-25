@@ -1023,3 +1023,341 @@ select:focus {
 .improvement-actions .btn {
     flex: 1;
 }
+
+/* ====================================== */
+/* AST Details Panel Styles               */
+/* ====================================== */
+
+.ast-details-panel {
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.ast-details-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background-color: var(--vscode-sideBarSectionHeader-background);
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.ast-details-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vscode-sideBarSectionHeader-foreground);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ast-details-close {
+    background: none;
+    border: none;
+    color: var(--vscode-foreground);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    opacity: 0.7;
+    transition: opacity 0.2s, background-color 0.2s;
+}
+
+.ast-details-close:hover {
+    opacity: 1;
+    background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.ast-details-content {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Collapsible Sections */
+.ast-detail-section {
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.ast-detail-section:last-child {
+    border-bottom: none;
+}
+
+.ast-detail-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.ast-detail-section-header:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.ast-detail-toggle {
+    font-size: 10px;
+    color: var(--vscode-foreground);
+    transition: transform 0.2s;
+    width: 12px;
+}
+
+.ast-detail-section-header.expanded .ast-detail-toggle {
+    transform: rotate(90deg);
+}
+
+.ast-detail-section-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--vscode-foreground);
+}
+
+.ast-detail-section-content {
+    padding: 8px 12px 12px 32px;
+    background-color: var(--vscode-input-background);
+    border-top: 1px solid var(--vscode-panel-border);
+}
+
+/* Detail Items */
+.ast-detail-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 6px 0;
+    font-size: 12px;
+    border-bottom: 1px dashed var(--vscode-panel-border);
+}
+
+.ast-detail-item:last-child {
+    border-bottom: none;
+}
+
+.ast-detail-label {
+    color: var(--vscode-descriptionForeground);
+    flex-shrink: 0;
+    margin-right: 12px;
+}
+
+.ast-detail-value {
+    color: var(--vscode-foreground);
+    text-align: right;
+    word-break: break-word;
+    font-family: var(--vscode-editor-font-family);
+}
+
+/* Tags for annotations */
+.ast-detail-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: flex-end;
+}
+
+.ast-detail-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background-color: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+.ast-detail-tag.di {
+    background-color: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+}
+
+/* Method List */
+.ast-method-list,
+.ast-field-list,
+.ast-injected-list,
+.ast-import-list,
+.ast-complexity-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.ast-method-item,
+.ast-field-item,
+.ast-injected-item {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    border-left: 3px solid var(--vscode-textLink-foreground);
+}
+
+.ast-method-item:hover,
+.ast-field-item:hover,
+.ast-injected-item:hover {
+    border-color: var(--vscode-focusBorder);
+}
+
+.ast-method-name,
+.ast-field-name,
+.ast-injected-name {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+    margin-bottom: 4px;
+}
+
+.ast-method-signature {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    word-break: break-all;
+    margin-bottom: 4px;
+}
+
+.ast-method-meta,
+.ast-field-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 10px;
+}
+
+.ast-method-meta-item,
+.ast-field-meta-item {
+    padding: 2px 6px;
+    background-color: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    border-radius: 3px;
+}
+
+.ast-method-meta-item.public {
+    background-color: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+}
+
+.ast-method-meta-item.private {
+    background-color: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+}
+
+.ast-method-meta-item.protected {
+    background-color: rgba(255, 152, 0, 0.2);
+    color: #ff9800;
+}
+
+.ast-method-meta-item.static {
+    background-color: rgba(33, 150, 243, 0.2);
+    color: #2196f3;
+}
+
+.ast-method-meta-item.complexity {
+    background-color: var(--vscode-textBlockQuote-background);
+}
+
+.ast-method-meta-item.complexity.high {
+    background-color: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+}
+
+.ast-method-meta-item.complexity.medium {
+    background-color: rgba(255, 152, 0, 0.2);
+    color: #ff9800;
+}
+
+/* Injected field styling */
+.ast-injected-item {
+    border-left-color: #4caf50;
+}
+
+.ast-injected-type {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 11px;
+    color: var(--vscode-textLink-foreground);
+    margin-bottom: 2px;
+}
+
+.ast-injected-annotations {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+/* Import list */
+.ast-import-item {
+    padding: 4px 8px;
+    margin-bottom: 2px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    background-color: var(--vscode-editor-background);
+    border-radius: 3px;
+    border-left: 2px solid transparent;
+}
+
+.ast-import-item:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.ast-import-item.project {
+    border-left-color: var(--vscode-textLink-foreground);
+    color: var(--vscode-foreground);
+}
+
+.ast-import-item.spring {
+    border-left-color: #4caf50;
+}
+
+.ast-import-item.java {
+    border-left-color: var(--vscode-descriptionForeground);
+}
+
+/* Complexity list */
+.ast-complexity-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background-color: var(--vscode-editor-background);
+    border-radius: 3px;
+}
+
+.ast-complexity-method {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 11px;
+    color: var(--vscode-foreground);
+}
+
+.ast-complexity-value {
+    font-weight: 600;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.ast-complexity-value.low {
+    background-color: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+}
+
+.ast-complexity-value.medium {
+    background-color: rgba(255, 152, 0, 0.2);
+    color: #ff9800;
+}
+
+.ast-complexity-value.high {
+    background-color: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+}
+
+/* Empty state */
+.ast-empty-state {
+    text-align: center;
+    padding: 16px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 11px;
+    font-style: italic;
+}

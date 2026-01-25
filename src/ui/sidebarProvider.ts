@@ -2264,14 +2264,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     const item = document.createElement('div');
                     item.className = 'ast-method-item';
 
-                    const complexity = ast.complexity?.methodComplexities?.[method.name] || 1;
+                    // Support both old (name) and new (methodName) property names
+                    const methodName = method.methodName || method.name || 'unknown';
+                    const methodSignature = method.methodSignature || method.signature || '';
+                    const complexity = ast.complexity?.methodComplexities?.[methodName] || method.complexity || 1;
                     const complexityClass = complexity > 10 ? 'high' : (complexity > 5 ? 'medium' : '');
 
+                    // Determine modifiers
+                    let modifiers = method.modifiers || [];
+                    if (modifiers.length === 0) {
+                        if (ast.publicMethods?.includes(methodName)) modifiers = ['public'];
+                        else if (ast.privateMethods?.includes(methodName)) modifiers = ['private'];
+                        else if (ast.protectedMethods?.includes(methodName)) modifiers = ['protected'];
+                    }
+
                     item.innerHTML = \`
-                        <div class="ast-method-name">\${method.name}</div>
-                        <div class="ast-method-signature">\${method.signature || ''}</div>
+                        <div class="ast-method-name">\${methodName}</div>
+                        <div class="ast-method-signature">\${methodSignature}</div>
                         <div class="ast-method-meta">
-                            \${method.modifiers?.map(m => \`<span class="ast-method-meta-item \${m}">\${m}</span>\`).join('') || ''}
+                            \${modifiers.map(m => \`<span class="ast-method-meta-item \${m}">\${m}</span>\`).join('')}
                             <span class="ast-method-meta-item">\${method.returnType || 'void'}</span>
                             <span class="ast-method-meta-item complexity \${complexityClass}">CC: \${complexity}</span>
                         </div>

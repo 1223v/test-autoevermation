@@ -5,8 +5,6 @@ import {
     GenerateTestResponse,
     GenerateScenariosRequest,
     GenerateScenariosResponse,
-    AnalyzeRequest,
-    AnalyzeResponse,
     HealthCheckResponse,
     ApiErrorResponse,
     ApiErrorCode,
@@ -85,11 +83,25 @@ export class ApiClient {
 
     /**
      * Checks if the server is reachable (returns boolean)
+     * Returns true for both 'healthy' and 'degraded' states
      */
     public async isServerReachable(): Promise<boolean> {
         try {
             const response = await this.healthCheck();
-            return response.status === 'healthy';
+            // Server is reachable if it responds with any valid status
+            return response.status === 'healthy' || response.status === 'degraded';
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Checks if the server is fully healthy (not degraded)
+     */
+    public async isServerFullyHealthy(): Promise<boolean> {
+        try {
+            const response = await this.healthCheck();
+            return response.status === 'healthy' && response.redis_connected === true;
         } catch {
             return false;
         }
@@ -134,21 +146,6 @@ export class ApiClient {
             }
 
             return data as GenerateScenariosResponse;
-        } catch (error) {
-            throw this.handleError(error as AxiosError);
-        }
-    }
-
-    /**
-     * Analyzes Java source code
-     */
-    public async analyze(request: AnalyzeRequest): Promise<AnalyzeResponse> {
-        try {
-            const response = await this.client.post<AnalyzeResponse>(
-                '/analyze',
-                request
-            );
-            return response.data;
         } catch (error) {
             throw this.handleError(error as AxiosError);
         }

@@ -108,19 +108,19 @@ export interface ApiErrorResponse {
 
 /**
  * Health check response
+ * @see server_api_docs.md - GET /health
  */
 export interface HealthCheckResponse {
-    status: 'healthy' | 'unhealthy';
+    /** Service status: "healthy" or "degraded" */
+    status: 'healthy' | 'degraded';
+    /** API version */
     version: string;
-    features?: string[];
-}
-
-/**
- * Request body for code analysis API
- */
-export interface AnalyzeRequest {
-    sourceFile: SourceFile;
-    analysisTypes: Array<'ast' | 'dependencies' | 'complexity'>;
+    /** List of available features */
+    features: string[];
+    /** Health check timestamp (ISO 8601 format) */
+    timestamp: string;
+    /** Redis connection status */
+    redis_connected: boolean;
 }
 
 /**
@@ -147,22 +147,6 @@ export interface ComplexityAnalysis {
     cyclomaticComplexity: number;
     linesOfCode: number;
     methodComplexities?: Record<string, number>;
-}
-
-/**
- * Detailed analysis response
- */
-export interface AnalyzeResponse {
-    success: boolean;
-    analysis: {
-        ast?: AstSummary;
-        dependencies?: {
-            imports: string[];
-            injectedBeans: string[];
-        };
-        complexity?: ComplexityAnalysis;
-    };
-    error?: ApiErrorInfo;
 }
 
 /**

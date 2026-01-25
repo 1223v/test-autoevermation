@@ -39,12 +39,6 @@
         "icon": "$(beaker)"
       },
       {
-        "command": "javaTestGenerator.analyzeCode",
-        "title": "Analyze Java Code",
-        "category": "Test-AutoEvermation",
-        "icon": "$(search)"
-      },
-      {
         "command": "javaTestGenerator.checkConnection",
         "title": "Check Server Connection",
         "category": "Test-AutoEvermation",
@@ -119,11 +113,6 @@
           "when": "resourceLangId == java",
           "command": "javaTestGenerator.generateTest",
           "group": "1_modification"
-        },
-        {
-          "when": "resourceLangId == java",
-          "command": "javaTestGenerator.analyzeCode",
-          "group": "1_modification"
         }
       ],
       "editor/title": [
@@ -146,12 +135,6 @@
         "command": "javaTestGenerator.generateTest",
         "key": "ctrl+shift+t",
         "mac": "cmd+shift+t",
-        "when": "resourceLangId == java"
-      },
-      {
-        "command": "javaTestGenerator.analyzeCode",
-        "key": "ctrl+shift+a",
-        "mac": "cmd+shift+a",
         "when": "resourceLangId == java"
       }
     ],
@@ -197,7 +180,8 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "axios": "^1.12.0"
+    "axios": "^1.12.0",
+    "java-ast": "^0.3.0"
   },
   "license": "MIT"
 }

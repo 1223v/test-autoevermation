@@ -4,7 +4,6 @@ import { SettingsManager } from './config/settings';
 import { StatusBarManager } from './ui/statusBar';
 import { SidebarProvider } from './ui/sidebarProvider';
 import { registerCommands } from './commands';
-import { AstCacheManager } from './services/astCacheManager';
 
 // Extension output channel for logging
 let outputChannel: vscode.OutputChannel;
@@ -29,17 +28,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Initialize status bar
         const statusBar = new StatusBarManager(context);
 
-        // Initialize AST cache manager
-        const astCacheManager = new AstCacheManager(context.workspaceState);
-        outputChannel.appendLine('AST Cache Manager initialized');
-
-        // Initialize sidebar
+        // Initialize sidebar (uses local java-ast for AST analysis)
         const sidebarProvider = new SidebarProvider(
             context.extensionUri,
             apiClient,
-            settings,
-            astCacheManager
+            settings
         );
+        outputChannel.appendLine('Sidebar initialized with java-ast analyzer');
         context.subscriptions.push(
             vscode.window.registerWebviewViewProvider(
                 SidebarProvider.viewType,

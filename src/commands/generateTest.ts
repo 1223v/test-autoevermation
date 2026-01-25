@@ -6,7 +6,114 @@ import { StatusBarManager } from '../ui/statusBar';
 import { SettingsManager } from '../config/settings';
 import { SourceFile, GenerateTestRequest } from '../api/types';
 import { getUserFriendlyErrorMessage } from '../api/errors';
-import { mergeTestMethods, mergeImports, extractTestMethods } from '../services/javaParser';
+
+// ============================================================
+// Helper functions for test file merging (from javaParser.ts)
+// ============================================================
+
+/**
+ * Extracts existing test methods from a test file
+ */
+function extractTestMethods(testCode: string): string[] {
+    const testMethods: string[] = [];
+    const lines = testCode.split('\n');
+    let foundTestAnnotation = false;
+
+    for (const line of lines) {
+        if (line.trim().startsWith('@Test')) {
+            foundTestAnnotation = true;
+            continue;
+        }
+        if (foundTestAnnotation) {
+            const methodMatch = line.match(/^\s*(?:public|private|protected)?\s*void\s+(\w+)\s*\(/);
+            if (methodMatch) {
+                testMethods.push(methodMatch[1]);
+                foundTestAnnotation = false;
+            }
+        }
+    }
+    return testMethods;
+}
+
+/**
+ * Extracts imports from Java source code
+ */
+function extractImports(sourceCode: string): string[] {
+    const imports: string[] = [];
+    const importRegex = /^\s*import\s+([\w.]+(?:\.\*)?)\s*;/gm;
+    let match;
+    while ((match = importRegex.exec(sourceCode)) !== null) {
+        imports.push(match[1]);
+    }
+    return imports;
+}
+
+/**
+ * Merges imports from new code into existing code
+ */
+function mergeImports(existingCode: string, newCode: string): string {
+    const existingImports = new Set(extractImports(existingCode));
+    const newImports = extractImports(newCode);
+    const importsToAdd = newImports.filter(imp => !existingImports.has(imp));
+
+    if (importsToAdd.length === 0) {
+        return existingCode;
+    }
+
+    const lines = existingCode.split('\n');
+    let insertIndex = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.match(/^\s*import\s+/)) {
+            insertIndex = i + 1;
+        } else if (line.match(/^\s*(?:public\s+)?class\s+/)) {
+            break;
+        }
+    }
+
+    const importLines = importsToAdd.map(imp => `import ${imp};`);
+    lines.splice(insertIndex, 0, ...importLines);
+    return lines.join('\n');
+}
+
+/**
+ * Merges new test methods into existing test file
+ */
+function mergeTestMethods(existingCode: string, newTestMethods: string): string {
+    const lines = existingCode.split('\n');
+    let lastBraceIndex = -1;
+    let braceCount = 0;
+    let classStarted = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.match(/^\s*(?:public\s+)?class\s+/)) {
+            classStarted = true;
+        }
+        if (classStarted) {
+            braceCount += (line.match(/\{/g) || []).length;
+            braceCount -= (line.match(/\}/g) || []).length;
+            if (braceCount === 0 && line.includes('}')) {
+                lastBraceIndex = i;
+            }
+        }
+    }
+
+    if (lastBraceIndex === -1) {
+        return existingCode + '\n\n' + newTestMethods;
+    }
+
+    const newMethodsMatch = newTestMethods.match(/(@Test[\s\S]*?)(?=\s*}\s*$)/);
+    const methodsToInsert = newMethodsMatch ? newMethodsMatch[1] : newTestMethods;
+
+    const beforeBrace = lines.slice(0, lastBraceIndex);
+    const afterBrace = lines.slice(lastBraceIndex);
+
+    return [...beforeBrace, '', '    // Additional test methods', methodsToInsert, ...afterBrace].join('\n');
+}
+
+// ============================================================
 
 /**
  * Creates the generate test command
@@ -293,106 +400,6 @@ function showAnalysisSummary(analysis: import('../api/types').AnalysisResult): v
 }
 
 /**
- * Creates the analyze code command
- */
-export function createAnalyzeCodeCommand(
-    apiClient: ApiClient,
-    statusBar: StatusBarManager
-): vscode.Disposable {
-    return vscode.commands.registerCommand(
-        'javaTestGenerator.analyzeCode',
-        async (uri?: vscode.Uri) => {
-            const targetUri = uri || vscode.window.activeTextEditor?.document.uri;
-
-            if (!targetUri) {
-                vscode.window.showWarningMessage('No Java file selected');
-                return;
-            }
-
-            if (!targetUri.fsPath.endsWith('.java')) {
-                vscode.window.showWarningMessage('Please select a Java file');
-                return;
-            }
-
-            const fileManager = new FileManager();
-            const pathResolver = new PathResolver();
-
-            try {
-                statusBar.setAnalyzing();
-
-                const content = await fileManager.readFile(targetUri);
-                const packageName = pathResolver.extractPackageFromContent(content);
-                const className = pathResolver.extractClassNameFromContent(content);
-
-                const response = await apiClient.analyze({
-                    sourceFile: {
-                        fileName: `${className}.java`,
-                        packageName,
-                        content
-                    },
-                    analysisTypes: ['ast', 'dependencies', 'complexity']
-                });
-
-                statusBar.setReady();
-
-                if (response.success && response.analysis) {
-                    showDetailedAnalysis(response.analysis, className);
-                } else {
-                    vscode.window.showWarningMessage('Analysis returned no results');
-                }
-            } catch (error) {
-                statusBar.setError(getUserFriendlyErrorMessage(error));
-                vscode.window.showErrorMessage(
-                    `Failed to analyze: ${getUserFriendlyErrorMessage(error)}`
-                );
-            }
-        }
-    );
-}
-
-/**
- * Shows detailed analysis in an output channel
- */
-function showDetailedAnalysis(
-    analysis: import('../api/types').AnalyzeResponse['analysis'],
-    className: string
-): void {
-    const outputChannel = vscode.window.createOutputChannel('Test-AutoEvermation');
-    outputChannel.clear();
-    outputChannel.appendLine(`=== Analysis: ${className} ===\n`);
-
-    if (analysis.ast) {
-        outputChannel.appendLine('--- AST Summary ---');
-        outputChannel.appendLine(`Method Count: ${analysis.ast.methodCount}`);
-        if (analysis.ast.publicMethods.length > 0) {
-            outputChannel.appendLine(`Public Methods: ${analysis.ast.publicMethods.join(', ')}`);
-        }
-        if (analysis.ast.dependencies.length > 0) {
-            outputChannel.appendLine(`Dependencies: ${analysis.ast.dependencies.join(', ')}`);
-        }
-        outputChannel.appendLine('');
-    }
-
-    if (analysis.dependencies) {
-        outputChannel.appendLine('--- Dependencies ---');
-        outputChannel.appendLine(`Imports: ${analysis.dependencies.imports.length}`);
-        if (analysis.dependencies.injectedBeans.length > 0) {
-            outputChannel.appendLine(`Injected Beans: ${analysis.dependencies.injectedBeans.join(', ')}`);
-        }
-        outputChannel.appendLine('');
-    }
-
-    if (analysis.complexity) {
-        outputChannel.appendLine('--- Complexity ---');
-        outputChannel.appendLine(`Cyclomatic Complexity: ${analysis.complexity.cyclomaticComplexity}`);
-        outputChannel.appendLine(`Lines of Code: ${analysis.complexity.linesOfCode}`);
-        outputChannel.appendLine('');
-    }
-
-    outputChannel.show();
-}
-
-/**
  * Creates the check connection command
  */
 export function createCheckConnectionCommand(
@@ -406,16 +413,19 @@ export function createCheckConnectionCommand(
 
             try {
                 const health = await apiClient.healthCheck();
+                const features = health.features.join(', ') || 'N/A';
 
                 if (health.status === 'healthy') {
                     statusBar.setReady();
-                    const features = health.features?.join(', ') || 'N/A';
                     vscode.window.showInformationMessage(
                         `Connected to server v${health.version}. Features: ${features}`
                     );
-                } else {
-                    statusBar.setDisconnected('Server is unhealthy');
-                    vscode.window.showWarningMessage('Server is not healthy');
+                } else if (health.status === 'degraded') {
+                    statusBar.setReady();
+                    const redisStatus = health.redis_connected ? 'connected' : 'disconnected';
+                    vscode.window.showWarningMessage(
+                        `Server is degraded (Redis: ${redisStatus}). Some features may be limited.`
+                    );
                 }
             } catch (error) {
                 statusBar.setDisconnected(getUserFriendlyErrorMessage(error));

@@ -4,7 +4,6 @@ import { StatusBarManager } from '../ui/statusBar';
 import { SettingsManager } from '../config/settings';
 import {
     createGenerateTestCommand,
-    createAnalyzeCodeCommand,
     createCheckConnectionCommand
 } from './generateTest';
 
@@ -20,11 +19,6 @@ export function registerCommands(
     // Register generate test command
     context.subscriptions.push(
         createGenerateTestCommand(apiClient, statusBar, settings)
-    );
-
-    // Register analyze code command
-    context.subscriptions.push(
-        createAnalyzeCodeCommand(apiClient, statusBar)
     );
 
     // Register check connection command

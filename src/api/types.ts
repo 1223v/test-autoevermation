@@ -37,6 +37,7 @@ export interface GenerateTestRequest {
     options: GenerationOptions;
     scenarios?: string;
     selectedMethods?: string[];
+    cachedAst?: CachedAstData;
 }
 
 /**
@@ -130,6 +131,7 @@ export interface GenerateScenariosRequest {
     sourceFile: SourceFile;
     options: GenerationOptions;
     selectedMethods?: string[];
+    cachedAst?: CachedAstData;
 }
 
 /**

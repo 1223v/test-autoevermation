@@ -970,15 +970,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const content = new TextDecoder().decode(contentBuffer);
             const fileName = filePath.split(/[/\\]/).pop() || '';
 
-            // Extract package name from source
-            const packageMatch = content.match(/^\s*package\s+([\w.]+)\s*;/m);
-            const packageName = packageMatch ? packageMatch[1] : '';
+            // Get or analyze AST data using java-ast
+            let astData = this._lastAnalysis;
+            if (!astData || this._lastAnalyzedFilePath !== filePath) {
+                astData = this._javaAstAnalyzer.analyze(content);
+                this._lastAnalysis = astData;
+                this._lastAnalyzedFilePath = filePath;
+            }
 
             // Call API to generate scenarios
             const response = await this._apiClient.generateScenarios({
                 sourceFile: {
                     fileName,
-                    packageName,
+                    packageName: astData.packageName,
                     content
                 },
                 options: {
@@ -987,7 +991,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     coverageTarget: this._settings.getCoverageTarget(),
                     includeEdgeCases: this._settings.includeEdgeCases()
                 },
-                selectedMethods: selectedMethods
+                selectedMethods: selectedMethods,
+                cachedAst: {
+                    className: astData.className,
+                    packageName: astData.packageName,
+                    methodCount: astData.methodCount,
+                    publicMethods: astData.publicMethods,
+                    privateMethods: astData.privateMethods,
+                    protectedMethods: astData.protectedMethods,
+                    dependencies: astData.dependencies,
+                    imports: astData.imports,
+                    annotations: astData.annotations,
+                    injectedBeans: astData.injectedBeans,
+                    complexity: astData.complexity
+                }
             });
 
             this._view?.webview.postMessage({

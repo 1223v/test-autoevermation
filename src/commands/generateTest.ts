@@ -4,8 +4,9 @@ import { FileManager } from '../services/fileManager';
 import { PathResolver } from '../services/pathResolver';
 import { StatusBarManager } from '../ui/statusBar';
 import { SettingsManager } from '../config/settings';
-import { SourceFile, GenerateTestRequest } from '../api/types';
+import { SourceFile, GenerateTestRequest, CachedAstData } from '../api/types';
 import { getUserFriendlyErrorMessage } from '../api/errors';
+import { JavaAstAnalyzer } from '../services/javaAstAnalyzer';
 
 // ============================================================
 // Helper functions for test file merging (from javaParser.ts)
@@ -157,6 +158,7 @@ export function createGenerateTestCommand(
 
             const fileManager = new FileManager();
             const pathResolver = new PathResolver();
+            const javaAstAnalyzer = new JavaAstAnalyzer();
 
             try {
                 statusBar.setGenerating();
@@ -179,9 +181,13 @@ export function createGenerateTestCommand(
                             return;
                         }
 
-                        // Parse package and class names
-                        const packageName = pathResolver.extractPackageFromContent(content) || pathInfo.packageName;
-                        const className = pathResolver.extractClassNameFromContent(content) || pathInfo.className;
+                        // Analyze AST using java-ast
+                        progress.report({ increment: 5, message: 'Analyzing AST...' });
+                        const astAnalysis = javaAstAnalyzer.analyze(content);
+
+                        // Parse package and class names from AST analysis
+                        const packageName = astAnalysis.packageName || pathResolver.extractPackageFromContent(content) || pathInfo.packageName;
+                        const className = astAnalysis.className || pathResolver.extractClassNameFromContent(content) || pathInfo.className;
 
                         // Prepare source file info
                         const sourceFile: SourceFile = {
@@ -190,8 +196,23 @@ export function createGenerateTestCommand(
                             content
                         };
 
+                        // Prepare cached AST data
+                        const cachedAst: CachedAstData = {
+                            className: astAnalysis.className,
+                            packageName: astAnalysis.packageName,
+                            methodCount: astAnalysis.methodCount,
+                            publicMethods: astAnalysis.publicMethods,
+                            privateMethods: astAnalysis.privateMethods,
+                            protectedMethods: astAnalysis.protectedMethods,
+                            dependencies: astAnalysis.dependencies,
+                            imports: astAnalysis.imports,
+                            annotations: astAnalysis.annotations,
+                            injectedBeans: astAnalysis.injectedBeans,
+                            complexity: astAnalysis.complexity
+                        };
+
                         // Collect dependencies if enabled
-                        progress.report({ increment: 10, message: 'Analyzing dependencies...' });
+                        progress.report({ increment: 5, message: 'Analyzing dependencies...' });
 
                         let dependencies: SourceFile[] = [];
                         if (settings.shouldIncludeDependencies()) {
@@ -218,6 +239,7 @@ export function createGenerateTestCommand(
                                 coverageTarget: settings.getCoverageTarget(),
                                 includeEdgeCases: settings.includeEdgeCases()
                             },
+                            cachedAst,
                             ...(scenarios && { scenarios })
                         };
 

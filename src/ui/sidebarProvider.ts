@@ -3,8 +3,7 @@ import { spawn } from 'child_process';
 import { ApiClient } from '../api/client';
 import { SettingsManager } from '../config/settings';
 import { getUserFriendlyErrorMessage } from '../api/errors';
-import { extractMethods } from '../services/javaParser';
-import { AstCacheManager, CachedAstEntry } from '../services/astCacheManager';
+import { JavaAstAnalyzer, FullAnalysisResult, MethodAnalysis } from '../services/javaAstAnalyzer';
 import { JacocoRunner } from '../services/jacocoRunner';
 import { PathResolver } from '../services/pathResolver';
 import { JacocoCoverageResult } from '../api/types';
@@ -19,18 +18,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private _apiClient: ApiClient;
     private _settings: SettingsManager;
     private _extensionUri: vscode.Uri;
-    private _astCacheManager: AstCacheManager;
+    private _javaAstAnalyzer: JavaAstAnalyzer;
+    private _lastAnalysis: FullAnalysisResult | null = null;
+    private _lastAnalyzedFilePath: string | null = null;
 
     constructor(
         extensionUri: vscode.Uri,
         apiClient: ApiClient,
-        settings: SettingsManager,
-        astCacheManager: AstCacheManager
+        settings: SettingsManager
     ) {
         this._extensionUri = extensionUri;
         this._apiClient = apiClient;
         this._settings = settings;
-        this._astCacheManager = astCacheManager;
+        this._javaAstAnalyzer = new JavaAstAnalyzer();
     }
 
     public resolveWebviewView(
@@ -203,13 +203,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         try {
             const health = await this._apiClient.healthCheck();
+            // Server is considered connected if status is 'healthy' or 'degraded'
+            const isConnected = health.status === 'healthy' || health.status === 'degraded';
 
             this._view?.webview.postMessage({
                 command: 'connectionResult',
-                success: health.status === 'healthy',
+                success: isConnected,
+                status: health.status,
                 version: health.version,
-                features: health.features
+                features: health.features,
+                timestamp: health.timestamp,
+                redisConnected: health.redis_connected
             });
+
+            // Show warning if server is in degraded state
+            if (health.status === 'degraded') {
+                vscode.window.showWarningMessage(
+                    `Server is in degraded state. Redis: ${health.redis_connected ? 'connected' : 'disconnected'}`
+                );
+            }
         } catch (error) {
             const errorMessage = getUserFriendlyErrorMessage(error);
             this._view?.webview.postMessage({
@@ -362,7 +374,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const contentBuffer = await vscode.workspace.fs.readFile(uri);
             const content = new TextDecoder().decode(contentBuffer);
 
-            const methods = extractMethods(content);
+            // Use JavaAstAnalyzer to extract methods
+            const analysis = this._javaAstAnalyzer.analyze(content);
+            this._lastAnalysis = analysis;
+            this._lastAnalyzedFilePath = filePath;
+
+            // Convert to the format expected by the webview
+            const methods = analysis.methods.map(m => {
+                // Infer modifiers from analysis arrays
+                const modifiers: string[] = [];
+                if (analysis.publicMethods.includes(m.methodName)) modifiers.push('public');
+                if (analysis.privateMethods.includes(m.methodName)) modifiers.push('private');
+                if (analysis.protectedMethods.includes(m.methodName)) modifiers.push('protected');
+
+                return {
+                    name: m.methodName,
+                    signature: m.methodSignature,
+                    returnType: m.returnType,
+                    parameters: m.parameters.map(p => `${p.type} ${p.name}`).join(', '),
+                    modifiers: modifiers,
+                    complexity: analysis.complexity.methodComplexities[m.methodName] || 1
+                };
+            });
 
             this._view?.webview.postMessage({
                 command: 'methodsLoaded',
@@ -378,34 +411,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Checks if AST analysis is cached for the given file
+     * Checks if AST analysis exists for the given file
+     * Note: No caching - always fresh analysis
      */
     private async _checkAstCache(filePath: string): Promise<void> {
-        try {
-            const uri = vscode.Uri.file(filePath);
-            const contentBuffer = await vscode.workspace.fs.readFile(uri);
-            const content = new TextDecoder().decode(contentBuffer);
+        // No caching - always indicate that analysis is needed
+        // But if we have a recent analysis for this file, use it
+        const hasRecentAnalysis = this._lastAnalyzedFilePath === filePath && this._lastAnalysis !== null;
 
-            const cacheResult = await this._astCacheManager.checkCache(filePath, content);
-
-            this._view?.webview.postMessage({
-                command: 'astCacheChecked',
-                hasCachedAst: cacheResult.hasCachedAst,
-                astData: cacheResult.astData,
-                isFileModified: cacheResult.isFileModified
-            });
-        } catch (error) {
-            this._view?.webview.postMessage({
-                command: 'astCacheChecked',
-                hasCachedAst: false,
-                astData: null,
-                isFileModified: false
-            });
-        }
+        this._view?.webview.postMessage({
+            command: 'astCacheChecked',
+            hasCachedAst: hasRecentAnalysis,
+            astData: hasRecentAnalysis ? {
+                filePath: filePath,
+                fileHash: '',
+                analyzedAt: new Date().toISOString(),
+                ast: this._lastAnalysis
+            } : null,
+            isFileModified: false
+        });
     }
 
     /**
-     * Analyzes AST and saves to cache (for new analysis)
+     * Analyzes AST using java-ast (always fresh, no caching)
      */
     private async _analyzeAst(filePath: string): Promise<void> {
         this._view?.webview.postMessage({ command: 'astAnalyzing' });
@@ -415,7 +443,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const contentBuffer = await vscode.workspace.fs.readFile(uri);
             const content = new TextDecoder().decode(contentBuffer);
 
-            const astEntry = await this._astCacheManager.analyzeAndSave(filePath, content);
+            // Analyze using local java-ast (no server required)
+            const analysis = this._javaAstAnalyzer.analyze(content);
+            this._lastAnalysis = analysis;
+            this._lastAnalyzedFilePath = filePath;
+
+            // Format response for backward compatibility with webview
+            const astEntry = {
+                filePath: filePath,
+                fileHash: '',
+                analyzedAt: new Date().toISOString(),
+                ast: analysis
+            };
 
             this._view?.webview.postMessage({
                 command: 'astAnalyzed',
@@ -423,7 +462,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             });
 
             vscode.window.showInformationMessage(
-                `AST analysis completed: ${astEntry.ast.methodCount} methods found`
+                `AST analysis completed: ${analysis.methodCount} methods found`
             );
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
@@ -436,61 +475,63 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Clears cache and re-analyzes AST
+     * Re-analyzes AST (same as _analyzeAst since there's no caching)
      */
     private async _reanalyzeAst(filePath: string): Promise<void> {
-        this._view?.webview.postMessage({ command: 'astAnalyzing' });
+        // With no caching, reanalyze is the same as analyze
+        await this._analyzeAst(filePath);
+    }
 
+    /**
+     * Uses last analyzed AST data (confirms selection)
+     */
+    private async _useCachedAst(filePath: string): Promise<void> {
+        if (this._lastAnalysis && this._lastAnalyzedFilePath === filePath) {
+            const astEntry = {
+                filePath: filePath,
+                fileHash: '',
+                analyzedAt: new Date().toISOString(),
+                ast: this._lastAnalysis
+            };
+
+            this._view?.webview.postMessage({
+                command: 'astSelected',
+                astData: astEntry
+            });
+        } else {
+            // Analyze on demand if no recent analysis
+            await this._analyzeAst(filePath);
+        }
+    }
+
+    /**
+     * Gets the currently analyzed AST data for API requests
+     */
+    public async getSelectedAstData(filePath: string): Promise<{ filePath: string; ast: FullAnalysisResult } | null> {
+        if (this._lastAnalysis && this._lastAnalyzedFilePath === filePath) {
+            return {
+                filePath: filePath,
+                ast: this._lastAnalysis
+            };
+        }
+
+        // Analyze on demand if needed
         try {
             const uri = vscode.Uri.file(filePath);
             const contentBuffer = await vscode.workspace.fs.readFile(uri);
             const content = new TextDecoder().decode(contentBuffer);
 
-            const astEntry = await this._astCacheManager.reanalyze(filePath, content);
+            const analysis = this._javaAstAnalyzer.analyze(content);
+            this._lastAnalysis = analysis;
+            this._lastAnalyzedFilePath = filePath;
 
-            this._view?.webview.postMessage({
-                command: 'astAnalyzed',
-                astData: astEntry
-            });
-
-            vscode.window.showInformationMessage(
-                `AST re-analysis completed: ${astEntry.ast.methodCount} methods found`
-            );
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Unknown error';
-            this._view?.webview.postMessage({
-                command: 'astAnalyzeError',
-                error: message
-            });
-            vscode.window.showErrorMessage(`AST re-analysis failed: ${message}`);
+            return {
+                filePath: filePath,
+                ast: analysis
+            };
+        } catch {
+            return null;
         }
-    }
-
-    /**
-     * Uses cached AST data (confirms selection)
-     */
-    private async _useCachedAst(filePath: string): Promise<void> {
-        try {
-            const cachedAst = await this._astCacheManager.getCachedAst(filePath);
-
-            if (cachedAst) {
-                this._view?.webview.postMessage({
-                    command: 'astSelected',
-                    astData: cachedAst
-                });
-            } else {
-                vscode.window.showWarningMessage('No cached AST found. Please analyze first.');
-            }
-        } catch (error) {
-            vscode.window.showErrorMessage('Failed to load cached AST');
-        }
-    }
-
-    /**
-     * Gets the currently selected AST data for API requests
-     */
-    public async getSelectedAstData(filePath: string): Promise<CachedAstEntry | null> {
-        return this._astCacheManager.getCachedAst(filePath);
     }
 
     /**
@@ -513,32 +554,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const content = new TextDecoder().decode(contentBuffer);
             const fileName = filePath.split(/[/\\]/).pop() || '';
 
-            // Extract package name from source
-            const packageMatch = content.match(/^\s*package\s+([\w.]+)\s*;/m);
-            const packageName = packageMatch ? packageMatch[1] : '';
-
-            // Get cached AST data
-            const cachedAst = await this._astCacheManager.getCachedAst(filePath);
+            // Get or analyze AST data using java-ast
+            let astData = this._lastAnalysis;
+            if (!astData || this._lastAnalyzedFilePath !== filePath) {
+                astData = this._javaAstAnalyzer.analyze(content);
+                this._lastAnalysis = astData;
+                this._lastAnalyzedFilePath = filePath;
+            }
 
             const response = await this._apiClient.checkTestability({
                 sourceFile: {
                     fileName,
-                    packageName,
+                    packageName: astData.packageName,
                     content
                 },
-                cachedAst: cachedAst?.ast ? {
-                    className: cachedAst.ast.className,
-                    packageName: cachedAst.ast.packageName,
-                    methodCount: cachedAst.ast.methodCount,
-                    publicMethods: cachedAst.ast.publicMethods,
-                    privateMethods: cachedAst.ast.privateMethods,
-                    protectedMethods: cachedAst.ast.protectedMethods,
-                    dependencies: cachedAst.ast.dependencies,
-                    imports: cachedAst.ast.imports,
-                    annotations: cachedAst.ast.annotations,
-                    injectedBeans: cachedAst.ast.injectedBeans,
-                    complexity: cachedAst.ast.complexity
-                } : undefined,
+                cachedAst: {
+                    className: astData.className,
+                    packageName: astData.packageName,
+                    methodCount: astData.methodCount,
+                    publicMethods: astData.publicMethods,
+                    privateMethods: astData.privateMethods,
+                    protectedMethods: astData.protectedMethods,
+                    dependencies: astData.dependencies,
+                    imports: astData.imports,
+                    annotations: astData.annotations,
+                    injectedBeans: astData.injectedBeans,
+                    complexity: astData.complexity
+                },
                 selectedMethods
             });
 
@@ -817,21 +859,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const sourceFileName = sourceFilePath.split(/[/\\]/).pop() || '';
             const testFileName = resolvedTestFilePath.split(/[/\\]/).pop() || '';
             
-            // Extract package names from source content
-            const sourcePackageMatch = sourceContent.match(/^\s*package\s+([\w.]+)\s*;/m);
-            const sourcePackageName = sourcePackageMatch ? sourcePackageMatch[1] : '';
-            
+            // Get or analyze AST data using java-ast
+            let astData = this._lastAnalysis;
+            if (!astData || this._lastAnalyzedFilePath !== sourceFilePath) {
+                astData = this._javaAstAnalyzer.analyze(sourceContent);
+                this._lastAnalysis = astData;
+                this._lastAnalyzedFilePath = sourceFilePath;
+            }
+
             const testPackageMatch = testContent.match(/^\s*package\s+([\w.]+)\s*;/m);
             const testPackageName = testPackageMatch ? testPackageMatch[1] : '';
-
-            // Get cached AST if available
-            const cachedAst = await this._astCacheManager.getCachedAst(sourceFilePath);
 
             // Call API to improve coverage
             const response = await this._apiClient.improveCoverage({
                 sourceFile: {
                     fileName: sourceFileName,
-                    packageName: sourcePackageName,
+                    packageName: astData.packageName,
                     content: sourceContent
                 },
                 testFile: {
@@ -840,7 +883,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     content: testContent
                 },
                 selectedMethods,
-                cachedAst: cachedAst?.ast,
+                cachedAst: astData,
                 currentCoverage,
                 targetCoverage
             });
@@ -1574,30 +1617,113 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 </div>
             </div>
 
-            <!-- AST Buttons: Analyze (when no cache) -->
+            <!-- AST Analyze Button -->
             <button class="btn btn-primary" id="btnAnalyzeAst">
                 <span class="icon">&#128269;</span>
                 <span id="analyzeAstText">Analyze AST</span>
                 <span class="spinner hidden" id="analyzeAstSpinner"></span>
             </button>
 
-            <!-- AST Buttons: Use Cached / Re-analyze (when cache exists) -->
-            <div class="ast-cached-buttons hidden" id="astCachedButtons">
-                <button class="btn btn-success" id="btnUseCachedAst">
-                    <span class="icon">&#10004;</span>
-                    Use Cached
-                </button>
-                <button class="btn btn-secondary" id="btnReanalyzeAst">
-                    <span class="icon">&#8635;</span>
-                    Re-analyze
-                </button>
-            </div>
-
             <!-- AST Selected Indicator -->
             <div class="ast-selected hidden" id="astSelectedIndicator">
                 <span class="ast-selected-icon">&#9989;</span>
                 <span class="ast-selected-text">AST analysis ready</span>
-                <button class="ast-selected-change" id="btnChangeAst">Change</button>
+                <button class="ast-selected-change" id="btnViewDetails">View Details</button>
+                <button class="ast-selected-change" id="btnChangeAst">Re-analyze</button>
+            </div>
+
+            <!-- AST Details Panel (collapsible) -->
+            <div class="ast-details-panel hidden" id="astDetailsPanel">
+                <div class="ast-details-header">
+                    <span class="ast-details-title">Analysis Details</span>
+                    <button class="ast-details-close" id="btnCloseDetails">&times;</button>
+                </div>
+                <div class="ast-details-content">
+                    <!-- Class Info Section -->
+                    <div class="ast-detail-section">
+                        <div class="ast-detail-section-header" data-section="classInfo">
+                            <span class="ast-detail-toggle">&#9654;</span>
+                            <span class="ast-detail-section-title">Class Information</span>
+                        </div>
+                        <div class="ast-detail-section-content" id="classInfoContent">
+                            <div class="ast-detail-item">
+                                <span class="ast-detail-label">Class Name:</span>
+                                <span class="ast-detail-value" id="detailClassName">-</span>
+                            </div>
+                            <div class="ast-detail-item">
+                                <span class="ast-detail-label">Package:</span>
+                                <span class="ast-detail-value" id="detailPackageName">-</span>
+                            </div>
+                            <div class="ast-detail-item">
+                                <span class="ast-detail-label">Annotations:</span>
+                                <div class="ast-detail-tags" id="detailClassAnnotations"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Methods Section -->
+                    <div class="ast-detail-section">
+                        <div class="ast-detail-section-header" data-section="methods">
+                            <span class="ast-detail-toggle">&#9654;</span>
+                            <span class="ast-detail-section-title">Methods (<span id="detailMethodCount">0</span>)</span>
+                        </div>
+                        <div class="ast-detail-section-content hidden" id="methodsContent">
+                            <div class="ast-method-list" id="detailMethodList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Fields Section -->
+                    <div class="ast-detail-section">
+                        <div class="ast-detail-section-header" data-section="fields">
+                            <span class="ast-detail-toggle">&#9654;</span>
+                            <span class="ast-detail-section-title">Fields (<span id="detailFieldCount">0</span>)</span>
+                        </div>
+                        <div class="ast-detail-section-content hidden" id="fieldsContent">
+                            <div class="ast-field-list" id="detailFieldList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Injected Dependencies Section -->
+                    <div class="ast-detail-section">
+                        <div class="ast-detail-section-header" data-section="injected">
+                            <span class="ast-detail-toggle">&#9654;</span>
+                            <span class="ast-detail-section-title">Injected Dependencies (<span id="detailInjectedCount">0</span>)</span>
+                        </div>
+                        <div class="ast-detail-section-content hidden" id="injectedContent">
+                            <div class="ast-injected-list" id="detailInjectedList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Imports Section -->
+                    <div class="ast-detail-section">
+                        <div class="ast-detail-section-header" data-section="imports">
+                            <span class="ast-detail-toggle">&#9654;</span>
+                            <span class="ast-detail-section-title">Imports (<span id="detailImportCount">0</span>)</span>
+                        </div>
+                        <div class="ast-detail-section-content hidden" id="importsContent">
+                            <div class="ast-import-list" id="detailImportList"></div>
+                        </div>
+                    </div>
+
+                    <!-- Complexity Section -->
+                    <div class="ast-detail-section">
+                        <div class="ast-detail-section-header" data-section="complexity">
+                            <span class="ast-detail-toggle">&#9654;</span>
+                            <span class="ast-detail-section-title">Complexity Analysis</span>
+                        </div>
+                        <div class="ast-detail-section-content hidden" id="complexityContent">
+                            <div class="ast-detail-item">
+                                <span class="ast-detail-label">Total Cyclomatic:</span>
+                                <span class="ast-detail-value" id="detailTotalComplexity">-</span>
+                            </div>
+                            <div class="ast-detail-item">
+                                <span class="ast-detail-label">Lines of Code:</span>
+                                <span class="ast-detail-value" id="detailLinesOfCode">-</span>
+                            </div>
+                            <div class="ast-complexity-list" id="detailComplexityList"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1855,11 +1981,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const btnAnalyzeAst = document.getElementById('btnAnalyzeAst');
         const analyzeAstText = document.getElementById('analyzeAstText');
         const analyzeAstSpinner = document.getElementById('analyzeAstSpinner');
-        const astCachedButtons = document.getElementById('astCachedButtons');
-        const btnUseCachedAst = document.getElementById('btnUseCachedAst');
-        const btnReanalyzeAst = document.getElementById('btnReanalyzeAst');
         const astSelectedIndicator = document.getElementById('astSelectedIndicator');
         const btnChangeAst = document.getElementById('btnChangeAst');
+        const btnViewDetails = document.getElementById('btnViewDetails');
+        const astDetailsPanel = document.getElementById('astDetailsPanel');
+        const btnCloseDetails = document.getElementById('btnCloseDetails');
+
+        // AST Details panel elements
+        const detailClassName = document.getElementById('detailClassName');
+        const detailPackageName = document.getElementById('detailPackageName');
+        const detailClassAnnotations = document.getElementById('detailClassAnnotations');
+        const detailMethodCount = document.getElementById('detailMethodCount');
+        const detailMethodList = document.getElementById('detailMethodList');
+        const detailFieldCount = document.getElementById('detailFieldCount');
+        const detailFieldList = document.getElementById('detailFieldList');
+        const detailInjectedCount = document.getElementById('detailInjectedCount');
+        const detailInjectedList = document.getElementById('detailInjectedList');
+        const detailImportCount = document.getElementById('detailImportCount');
+        const detailImportList = document.getElementById('detailImportList');
+        const detailTotalComplexity = document.getElementById('detailTotalComplexity');
+        const detailLinesOfCode = document.getElementById('detailLinesOfCode');
+        const detailComplexityList = document.getElementById('detailComplexityList');
 
         // Method selection elements
         const methodSelectionSection = document.getElementById('methodSelectionSection');
@@ -2054,41 +2196,180 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        // AST Analysis: Use Cached button
-        btnUseCachedAst.addEventListener('click', () => {
-            if (currentFilePath && cachedAstData) {
-                selectedAstData = cachedAstData;
-                isAstReady = true;
-                showAstSelectedState();
-                enableMethodSelection();
-            }
-        });
-
-        // AST Analysis: Re-analyze button
-        btnReanalyzeAst.addEventListener('click', () => {
-            if (currentFilePath) {
-                vscode.postMessage({
-                    command: 'reanalyzeAst',
-                    filePath: currentFilePath
-                });
-            }
-        });
-
-        // AST Analysis: Change button (go back to AST selection)
+        // AST Analysis: Change button (go back to re-analyze)
         btnChangeAst.addEventListener('click', () => {
             isAstReady = false;
             selectedAstData = null;
             astSelectedIndicator.classList.add('hidden');
+            astDetailsPanel.classList.add('hidden');
             methodSelectionSection.classList.add('hidden');
             btnGenerateScenarios.disabled = true;
 
-            // Show AST buttons again
-            if (cachedAstData) {
-                astCachedButtons.classList.remove('hidden');
-            } else {
-                btnAnalyzeAst.classList.remove('hidden');
+            // Show Analyze button again (no caching)
+            btnAnalyzeAst.classList.remove('hidden');
+        });
+
+        // AST Analysis: View Details button
+        btnViewDetails.addEventListener('click', () => {
+            if (selectedAstData && selectedAstData.ast) {
+                renderAstDetails(selectedAstData.ast);
+                astDetailsPanel.classList.remove('hidden');
             }
         });
+
+        // AST Analysis: Close Details button
+        btnCloseDetails.addEventListener('click', () => {
+            astDetailsPanel.classList.add('hidden');
+        });
+
+        // AST Details: Section toggle (collapsible accordion)
+        document.querySelectorAll('.ast-detail-section-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const section = header.getAttribute('data-section');
+                const content = document.getElementById(section + 'Content');
+                const toggle = header.querySelector('.ast-detail-toggle');
+
+                if (content) {
+                    const isHidden = content.classList.contains('hidden');
+                    content.classList.toggle('hidden');
+                    header.classList.toggle('expanded', isHidden);
+                }
+            });
+        });
+
+        // Helper: Render AST Details
+        function renderAstDetails(ast) {
+            // Class Info
+            detailClassName.textContent = ast.className || '-';
+            detailPackageName.textContent = ast.packageName || '-';
+
+            // Class Annotations
+            detailClassAnnotations.innerHTML = '';
+            if (ast.classAnnotations && ast.classAnnotations.length > 0) {
+                ast.classAnnotations.forEach(ann => {
+                    const tag = document.createElement('span');
+                    tag.className = 'ast-detail-tag';
+                    tag.textContent = ann;
+                    detailClassAnnotations.appendChild(tag);
+                });
+            } else {
+                detailClassAnnotations.innerHTML = '<span class="ast-empty-state">No annotations</span>';
+            }
+
+            // Methods
+            detailMethodCount.textContent = ast.methods ? ast.methods.length : 0;
+            detailMethodList.innerHTML = '';
+            if (ast.methods && ast.methods.length > 0) {
+                ast.methods.forEach(method => {
+                    const item = document.createElement('div');
+                    item.className = 'ast-method-item';
+
+                    const complexity = ast.complexity?.methodComplexities?.[method.name] || 1;
+                    const complexityClass = complexity > 10 ? 'high' : (complexity > 5 ? 'medium' : '');
+
+                    item.innerHTML = \`
+                        <div class="ast-method-name">\${method.name}</div>
+                        <div class="ast-method-signature">\${method.signature || ''}</div>
+                        <div class="ast-method-meta">
+                            \${method.modifiers?.map(m => \`<span class="ast-method-meta-item \${m}">\${m}</span>\`).join('') || ''}
+                            <span class="ast-method-meta-item">\${method.returnType || 'void'}</span>
+                            <span class="ast-method-meta-item complexity \${complexityClass}">CC: \${complexity}</span>
+                        </div>
+                    \`;
+                    detailMethodList.appendChild(item);
+                });
+            } else {
+                detailMethodList.innerHTML = '<div class="ast-empty-state">No methods found</div>';
+            }
+
+            // Fields
+            detailFieldCount.textContent = ast.fields ? ast.fields.length : 0;
+            detailFieldList.innerHTML = '';
+            if (ast.fields && ast.fields.length > 0) {
+                ast.fields.forEach(field => {
+                    const item = document.createElement('div');
+                    item.className = 'ast-field-item';
+                    item.innerHTML = \`
+                        <div class="ast-field-name">\${field.name}</div>
+                        <div class="ast-field-meta">
+                            <span class="ast-field-meta-item">\${field.type}</span>
+                            \${field.annotations?.map(a => \`<span class="ast-detail-tag di">\${a}</span>\`).join('') || ''}
+                        </div>
+                    \`;
+                    detailFieldList.appendChild(item);
+                });
+            } else {
+                detailFieldList.innerHTML = '<div class="ast-empty-state">No fields found</div>';
+            }
+
+            // Injected Dependencies
+            const injectedFields = ast.injectedFields || [];
+            detailInjectedCount.textContent = injectedFields.length;
+            detailInjectedList.innerHTML = '';
+            if (injectedFields.length > 0) {
+                injectedFields.forEach(field => {
+                    const item = document.createElement('div');
+                    item.className = 'ast-injected-item';
+                    item.innerHTML = \`
+                        <div class="ast-injected-name">\${field.name}</div>
+                        <div class="ast-injected-type">\${field.type}</div>
+                        <div class="ast-injected-annotations">
+                            \${field.annotations?.map(a => \`<span class="ast-detail-tag di">\${a}</span>\`).join('') || ''}
+                        </div>
+                    \`;
+                    detailInjectedList.appendChild(item);
+                });
+            } else {
+                detailInjectedList.innerHTML = '<div class="ast-empty-state">No DI fields (@Autowired, @Inject, etc.)</div>';
+            }
+
+            // Imports
+            const imports = ast.imports || [];
+            detailImportCount.textContent = imports.length;
+            detailImportList.innerHTML = '';
+            if (imports.length > 0) {
+                imports.forEach(imp => {
+                    const item = document.createElement('div');
+                    let importClass = 'ast-import-item';
+                    if (imp.startsWith('java.') || imp.startsWith('javax.')) {
+                        importClass += ' java';
+                    } else if (imp.startsWith('org.springframework')) {
+                        importClass += ' spring';
+                    } else {
+                        importClass += ' project';
+                    }
+                    item.className = importClass;
+                    item.textContent = imp;
+                    detailImportList.appendChild(item);
+                });
+            } else {
+                detailImportList.innerHTML = '<div class="ast-empty-state">No imports</div>';
+            }
+
+            // Complexity
+            if (ast.complexity) {
+                detailTotalComplexity.textContent = ast.complexity.cyclomaticComplexity || 0;
+                detailLinesOfCode.textContent = ast.complexity.linesOfCode || 0;
+
+                detailComplexityList.innerHTML = '';
+                const methodComplexities = ast.complexity.methodComplexities || {};
+                const sortedMethods = Object.entries(methodComplexities)
+                    .sort((a, b) => b[1] - a[1]); // Sort by complexity descending
+
+                if (sortedMethods.length > 0) {
+                    sortedMethods.forEach(([name, complexity]) => {
+                        const item = document.createElement('div');
+                        item.className = 'ast-complexity-item';
+                        const complexityClass = complexity > 10 ? 'high' : (complexity > 5 ? 'medium' : 'low');
+                        item.innerHTML = \`
+                            <span class="ast-complexity-method">\${name}</span>
+                            <span class="ast-complexity-value \${complexityClass}">\${complexity}</span>
+                        \`;
+                        detailComplexityList.appendChild(item);
+                    });
+                }
+            }
+        }
 
         // Helper: Show AST info in the info box
         function showAstInfo(astData) {
@@ -2112,7 +2393,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             astStatus.classList.add('hidden');
             astInfoBox.classList.add('hidden');
             btnAnalyzeAst.classList.add('hidden');
-            astCachedButtons.classList.add('hidden');
             astSelectedIndicator.classList.remove('hidden');
         }
 
@@ -2133,10 +2413,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             isAstReady = false;
             astStatus.classList.remove('hidden');
             astStatusIcon.innerHTML = '&#9888;';
-            astStatusText.textContent = 'No cached analysis';
+            astStatusText.textContent = 'Ready to analyze';
             astInfoBox.classList.add('hidden');
             btnAnalyzeAst.classList.remove('hidden');
-            astCachedButtons.classList.add('hidden');
             astSelectedIndicator.classList.add('hidden');
         }
 
@@ -2508,49 +2787,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     break;
 
                 case 'astCacheChecked':
+                    // No caching - always show Analyze button
                     cachedAstData = message.astData;
-                    if (message.hasCachedAst) {
-                        // Show cached AST info
-                        showAstInfo(message.astData);
-
-                        if (message.isFileModified) {
-                            // File has been modified since last analysis
-                            astStatusIcon.innerHTML = '&#9888;';
-                            astStatusText.textContent = 'File modified since last analysis';
-                            astStatus.classList.remove('hidden');
-                        } else {
-                            // Cache is valid
-                            astStatusIcon.innerHTML = '&#10004;';
-                            astStatusText.textContent = 'Cached analysis available';
-                            astStatus.classList.remove('hidden');
-                        }
-
-                        // Show Use Cached / Re-analyze buttons
-                        btnAnalyzeAst.classList.add('hidden');
-                        astCachedButtons.classList.remove('hidden');
-                    } else {
-                        // No cache - show Analyze button
-                        astStatusIcon.innerHTML = '&#9888;';
-                        astStatusText.textContent = 'No cached analysis';
-                        astStatus.classList.remove('hidden');
-                        astInfoBox.classList.add('hidden');
-                        btnAnalyzeAst.classList.remove('hidden');
-                        astCachedButtons.classList.add('hidden');
-                    }
+                    astStatusIcon.innerHTML = '&#128269;';
+                    astStatusText.textContent = 'Click to analyze';
+                    astStatus.classList.remove('hidden');
+                    astInfoBox.classList.add('hidden');
+                    btnAnalyzeAst.classList.remove('hidden');
                     break;
 
                 case 'astAnalyzing':
                     analyzeAstText.textContent = 'Analyzing...';
                     analyzeAstSpinner.classList.remove('hidden');
                     btnAnalyzeAst.disabled = true;
-                    btnReanalyzeAst.disabled = true;
                     break;
 
                 case 'astAnalyzed':
                     analyzeAstText.textContent = 'Analyze AST';
                     analyzeAstSpinner.classList.add('hidden');
                     btnAnalyzeAst.disabled = false;
-                    btnReanalyzeAst.disabled = false;
 
                     cachedAstData = message.astData;
                     selectedAstData = message.astData;
@@ -2561,14 +2816,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                     showAstSelectedState();
                     enableMethodSelection();
 
-                    showMessage('success', 'AST analysis completed and cached.');
+                    showMessage('success', 'AST analysis completed.');
                     break;
 
                 case 'astAnalyzeError':
                     analyzeAstText.textContent = 'Analyze AST';
                     analyzeAstSpinner.classList.add('hidden');
                     btnAnalyzeAst.disabled = false;
-                    btnReanalyzeAst.disabled = false;
                     // Error is shown as VS Code notification
                     break;
 

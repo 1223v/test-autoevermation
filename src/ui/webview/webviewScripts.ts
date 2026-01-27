@@ -1122,6 +1122,10 @@ export function generateWebviewScripts(): string {
                 case 'testSuccess':
                     btnStopAutoTest.classList.add('hidden');
                     btnGenerateSelected.disabled = false;
+                    runTestText.textContent = 'Run Test';
+                    runTestSpinner.classList.add('hidden');
+                    btnRunTest.disabled = false;
+                    btnRunAllTests.disabled = false;
                     testResultArea.classList.remove('hidden');
                     testResult.className = 'test-result success';
                     testResult.innerHTML = '<div class="result-header">&#10004; All Tests Passed!</div>' +
@@ -1149,6 +1153,10 @@ export function generateWebviewScripts(): string {
                 case 'testRegenerationFailed':
                     btnStopAutoTest.classList.add('hidden');
                     btnGenerateSelected.disabled = false;
+                    runTestText.textContent = 'Run Test';
+                    runTestSpinner.classList.add('hidden');
+                    btnRunTest.disabled = false;
+                    btnRunAllTests.disabled = false;
                     testResultArea.classList.remove('hidden');
                     testResult.className = 'test-result failure';
                     testResult.innerHTML = '<div class="result-header">&#10060; Max Retries Reached</div>' +
@@ -1160,6 +1168,10 @@ export function generateWebviewScripts(): string {
                 case 'testRegenerationError':
                     btnStopAutoTest.classList.add('hidden');
                     btnGenerateSelected.disabled = false;
+                    runTestText.textContent = 'Run Test';
+                    runTestSpinner.classList.add('hidden');
+                    btnRunTest.disabled = false;
+                    btnRunAllTests.disabled = false;
                     showMessage('error', 'Test regeneration failed: ' + message.error);
                     break;
 

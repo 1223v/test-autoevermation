@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { HandlerContext } from './types';
 import { PathResolver } from '../../services/pathResolver';
 
@@ -13,12 +13,26 @@ export type CoverageCallback = (testClassName: string) => Promise<void>;
  */
 export class TestRunnerHandler {
     private _coverageCallback: CoverageCallback | null = null;
+    private _cancelled: boolean = false;
+    private _currentProcess: ChildProcess | null = null;
 
     /**
      * Sets the callback for running coverage after tests pass
      */
     setCoverageCallback(callback: CoverageCallback): void {
         this._coverageCallback = callback;
+    }
+
+    /**
+     * Stops the auto-test cycle by cancelling the current process and flag
+     */
+    stopAutoTest(context: HandlerContext): void {
+        this._cancelled = true;
+        if (this._currentProcess) {
+            this._currentProcess.kill('SIGTERM');
+            this._currentProcess = null;
+        }
+        context.postMessage({ command: 'autoTestStopped' });
     }
 
     /**
@@ -36,16 +50,22 @@ export class TestRunnerHandler {
             return;
         }
 
+        this._cancelled = false;
+
         try {
             const uri = vscode.Uri.file(filePath);
 
             // Generate test using command
             await vscode.commands.executeCommand('javaTestGenerator.generateTest', uri, scenarios);
 
+            if (this._cancelled) { return; }
+
             // If autoRunTest is true, wait a bit for file to be saved, then auto-run test
             if (autoRunTest) {
                 // Wait 1 second for file to be fully saved
                 await new Promise(resolve => setTimeout(resolve, 1000));
+
+                if (this._cancelled) { return; }
 
                 // Extract test class name
                 const fileName = filePath.split(/[/\\]/).pop() || '';
@@ -205,6 +225,8 @@ export class TestRunnerHandler {
         retryCount: number,
         context: HandlerContext
     ): Promise<void> {
+        if (this._cancelled) { return; }
+
         context.postMessage({ command: 'testRunning' });
 
         try {
@@ -235,6 +257,9 @@ export class TestRunnerHandler {
             }
 
             const result = await this.executeCommand(command, args, workspaceFolder.uri.fsPath);
+
+            if (this._cancelled) { return; }
+
             const success = this.parseTestResult(result, buildTool);
 
             if (success) {
@@ -276,6 +301,7 @@ export class TestRunnerHandler {
                 );
             }
         } catch (error) {
+            if (this._cancelled) { return; }
             const message = error instanceof Error ? error.message : 'Unknown error';
             context.postMessage({
                 command: 'testError',
@@ -298,6 +324,8 @@ export class TestRunnerHandler {
         retryCount: number,
         context: HandlerContext
     ): Promise<void> {
+        if (this._cancelled) { return; }
+
         const maxRetries = 3;
 
         if (retryCount >= maxRetries) {
@@ -344,6 +372,8 @@ export class TestRunnerHandler {
                 scenarios: scenarios + errorFeedback,
                 selectedMethods: selectedMethods
             });
+
+            if (this._cancelled) { return; }
 
             if (response.success) {
                 // Apply the new test code
@@ -420,6 +450,8 @@ export class TestRunnerHandler {
                 windowsHide: true
             });
 
+            this._currentProcess = child;
+
             let stdout = '';
             let stderr = '';
 
@@ -436,6 +468,7 @@ export class TestRunnerHandler {
             });
 
             child.on('close', (code: number) => {
+                this._currentProcess = null;
                 const output = stdout + '\n' + stderr;
                 // Even with non-zero exit code, we might have useful test output
                 if (code !== 0 && !stdout && !stderr) {

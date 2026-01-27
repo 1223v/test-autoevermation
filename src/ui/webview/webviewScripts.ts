@@ -36,7 +36,8 @@ export function generateWebviewScripts(): string {
         const btnApproveScenarios = document.getElementById('btnApproveScenarios');
         const btnRegenerateScenarios = document.getElementById('btnRegenerateScenarios');
         const btnGenerateSelected = document.getElementById('btnGenerateSelected');
-
+        const feedbackInput = document.getElementById('feedbackInput');
+        const btnStopAutoTest = document.getElementById('btnStopAutoTest');
 
         // AST Analysis elements
         const astSection = document.getElementById('astSection');
@@ -566,20 +567,23 @@ export function generateWebviewScripts(): string {
             showMessage('success', 'Scenarios approved! You can now generate the test.');
         });
 
-        // Regenerate scenarios
+        // Regenerate scenarios with optional feedback
         btnRegenerateScenarios.addEventListener('click', () => {
-            if (currentFilePath) {
-                scenariosApproved = false;
-                scenarioStatus.textContent = 'Draft';
-                scenarioStatus.className = 'scenario-status draft';
-                scenarioEditor.disabled = false;
-                btnApproveScenarios.disabled = false;
-                btnGenerateSelected.disabled = true;
-                vscode.postMessage({
-                    command: 'generateScenarios',
-                    filePath: currentFilePath
-                });
-            }
+            if (!currentFilePath) return;
+
+            const feedback = feedbackInput.value.trim();
+            vscode.postMessage({
+                command: 'regenerateScenarios',
+                filePath: currentFilePath,
+                selectedMethods: selectedMethods,
+                previousScenarios: scenarioEditor.value,
+                feedback: feedback || undefined
+            });
+
+            feedbackInput.value = '';
+            scenariosApproved = false;
+            scenarioStatus.textContent = 'Regenerating...';
+            scenarioStatus.className = 'scenario-status draft';
         });
 
         // Scenario editor change - mark as draft if edited after generation
@@ -604,6 +608,12 @@ export function generateWebviewScripts(): string {
                     autoRunTest: true
                 });
             }
+        });
+
+        // Stop auto-test
+        btnStopAutoTest.addEventListener('click', () => {
+            btnStopAutoTest.disabled = true;
+            vscode.postMessage({ command: 'stopAutoTest' });
         });
 
         // Run specific test
@@ -1018,6 +1028,8 @@ export function generateWebviewScripts(): string {
                     break;
 
                 case 'testError':
+                    btnStopAutoTest.classList.add('hidden');
+                    btnGenerateSelected.disabled = false;
                     runTestText.textContent = 'Run Test';
                     runTestSpinner.classList.add('hidden');
                     btnRunTest.disabled = false;
@@ -1101,10 +1113,15 @@ export function generateWebviewScripts(): string {
 
                 // Auto-Test handlers
                 case 'autoTestStarting':
+                    btnGenerateSelected.disabled = true;
+                    btnStopAutoTest.classList.remove('hidden');
+                    btnStopAutoTest.disabled = false;
                     showMessage('info', 'Test generated! Auto-running tests...');
                     break;
 
                 case 'testSuccess':
+                    btnStopAutoTest.classList.add('hidden');
+                    btnGenerateSelected.disabled = false;
                     testResultArea.classList.remove('hidden');
                     testResult.className = 'test-result success';
                     testResult.innerHTML = '<div class="result-header">&#10004; All Tests Passed!</div>' +
@@ -1130,6 +1147,8 @@ export function generateWebviewScripts(): string {
                     break;
 
                 case 'testRegenerationFailed':
+                    btnStopAutoTest.classList.add('hidden');
+                    btnGenerateSelected.disabled = false;
                     testResultArea.classList.remove('hidden');
                     testResult.className = 'test-result failure';
                     testResult.innerHTML = '<div class="result-header">&#10060; Max Retries Reached</div>' +
@@ -1139,7 +1158,19 @@ export function generateWebviewScripts(): string {
                     break;
 
                 case 'testRegenerationError':
+                    btnStopAutoTest.classList.add('hidden');
+                    btnGenerateSelected.disabled = false;
                     showMessage('error', 'Test regeneration failed: ' + message.error);
+                    break;
+
+                case 'autoTestStopped':
+                    btnStopAutoTest.classList.add('hidden');
+                    btnGenerateSelected.disabled = false;
+                    runTestText.textContent = 'Run Test';
+                    runTestSpinner.classList.add('hidden');
+                    btnRunTest.disabled = false;
+                    btnRunAllTests.disabled = false;
+                    showMessage('info', 'Auto-test stopped.');
                     break;
 
                 // Auto Coverage Improvement handlers

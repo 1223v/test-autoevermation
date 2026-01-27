@@ -306,6 +306,10 @@ export function generateHtmlTemplate(
                 <span class="scenario-status" id="scenarioStatus">Draft</span>
             </div>
             <textarea id="scenarioEditor" class="scenario-editor" placeholder="Test scenarios will appear here..."></textarea>
+            <div class="feedback-area">
+                <textarea id="feedbackInput" class="feedback-input" rows="2"
+                    placeholder="개선 피드백 (선택사항)&#10;예: edge case 추가, null 체크 시나리오 포함, 예외 상황 테스트 등"></textarea>
+            </div>
             <div class="scenario-actions">
                 <button class="btn btn-primary" id="btnApproveScenarios">
                     <span class="icon">&#10004;</span>
@@ -322,6 +326,10 @@ export function generateHtmlTemplate(
         <button class="btn btn-success" id="btnGenerateSelected" disabled>
             <span class="icon">&#9881;</span>
             Generate Test
+        </button>
+        <button class="btn btn-danger hidden" id="btnStopAutoTest">
+            <span class="icon">&#9632;</span>
+            Stop
         </button>
     </div>
 

@@ -402,6 +402,15 @@ select:focus {
     opacity: 0.6;
 }
 
+.btn-danger {
+    background-color: #f44336;
+    color: white;
+}
+
+.btn-danger:hover {
+    background-color: #d32f2f;
+}
+
 .scenario-header {
     display: flex;
     justify-content: space-between;
@@ -444,6 +453,30 @@ select:focus {
 }
 
 .scenario-editor:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    border-color: var(--vscode-focusBorder);
+}
+
+.feedback-area {
+    margin-top: 8px;
+}
+
+.feedback-input {
+    width: 100%;
+    min-height: 48px;
+    max-height: 120px;
+    padding: 8px 10px;
+    border: 1px solid var(--vscode-input-border);
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border-radius: 4px;
+    font-size: 12px;
+    resize: vertical;
+    line-height: 1.4;
+    font-family: var(--vscode-font-family);
+}
+
+.feedback-input:focus {
     outline: 1px solid var(--vscode-focusBorder);
     border-color: var(--vscode-focusBorder);
 }

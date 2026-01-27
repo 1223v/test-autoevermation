@@ -132,6 +132,8 @@ export interface GenerateScenariosRequest {
     options: GenerationOptions;
     selectedMethods?: string[];
     cachedAst?: CachedAstData;
+    previousScenarios?: string;
+    feedback?: string;
 }
 
 /**

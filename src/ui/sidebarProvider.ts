@@ -175,13 +175,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                         context
                     );
                     break;
+                case 'regenerateScenarios':
+                    await this._scenarioHandler.regenerateScenarios(
+                        message.filePath,
+                        message.selectedMethods,
+                        message.previousScenarios,
+                        message.feedback,
+                        context
+                    );
+                    break;
 
                 // Test commands
                 case 'generateTest':
                     await vscode.commands.executeCommand('javaTestGenerator.generateTest');
                     break;
+                case 'stopAutoTest':
+                    this._testRunnerHandler.stopAutoTest(context);
+                    break;
                 case 'generateTestForFile':
-                    await this._testRunnerHandler.generateTestForFile(
+                    // Fire-and-forget: don't block message queue so stopAutoTest can be processed
+                    this._testRunnerHandler.generateTestForFile(
                         message.filePath,
                         message.scenarios,
                         message.selectedMethods,
